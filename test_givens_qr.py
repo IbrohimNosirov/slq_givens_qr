@@ -79,6 +79,9 @@ class TestGivensQR(unittest.TestCase):
                 computed_evals = np.sort(computed_evals)
                 ref_evals = np.sort(ref_evals)
 
+                print("evec_actual ", computed_evec_row)
+                print("evec_desired ", ref_evecs[0, :])
+
                 np.testing.assert_allclose(
                     computed_evals,
                     ref_evals,

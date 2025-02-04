@@ -51,11 +51,7 @@ def apply_givens(a, b, c, s, i):
             		                [s, c]])
 
 
-#    print("givens rotation ", givens_rotation)
-#    print("block ", block)
     result = givens_rotation @ block @ givens_rotation.T
-#    result = givens_rotation @ block
-#    print("Result ", result)
 
     a[i] = result[0,0]
     a[i+1] = result[1,1]
@@ -65,13 +61,13 @@ def apply_givens(a, b, c, s, i):
 
     return a, b
 
-# Updates e_1^T Q by applying a single Givens rotation
+# Updates Q (Gm Gm-1 ... G1).T e_1 by applying a single Givens rotation
 def apply_givens_to_evec_row(evec_row, c, s, i):
     tau1 = evec_row[i]
     tau2 = evec_row[i+1]
 
-    evec_row[i] = c * tau1 - s * tau2
-    evec_row[i+1] = s * tau1 + c * tau2
+    evec_row[i]   = c*tau1 + s*tau2
+    evec_row[i+1] = c*tau2 - s*tau1
 
     return evec_row
 
@@ -82,7 +78,8 @@ def qr_tridiag(a, b, max_iter=1000, tol=1e-10):
     b = b.copy()
 
     # List to store Givens rotations
-    givens_rotations = []
+    evec_row = np.zeros(n)
+    evec_row[0] = 1.0
 
     for iter in range(max_iter):
         # Compute Wilkinson shift
@@ -96,7 +93,7 @@ def qr_tridiag(a, b, max_iter=1000, tol=1e-10):
             if abs(b[i]) > tol:
                 c, s, r = givens_rotation(a[i], b[i])
                 a, b = apply_givens(a, b, c, s, i)
-                givens_rotations.append((c, s, i))
+                evec_row = apply_givens_to_evec_row(evec_row, c, s, i)
 
         # Shift back
         a += shift
@@ -107,11 +104,5 @@ def qr_tridiag(a, b, max_iter=1000, tol=1e-10):
 
     # Extract eigenvalues
     eigvals = a
-
-    # Compute e_1^T Q
-    evec_row = np.zeros(n)
-    evec_row[0] = 1.0
-    for c, s, i in reversed(givens_rotations):
-        evec_row = apply_givens_to_evec_row(evec_row, c, s, i)
 
     return eigvals, evec_row

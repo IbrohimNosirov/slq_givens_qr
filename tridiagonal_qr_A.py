@@ -61,7 +61,7 @@ def apply_givens_to_evec_row(evec_row, c, s, i, k):
     return evec_row
 
 # QR iteration with Wilkinson shift
-def qr_iteration_wilkinson(A, max_iter=10, tol=1e-10):
+def qr_iteration_wilkinson(A, max_iter=1000, tol=1e-10):
     n = A.shape[0]
     A = A.copy()
 
@@ -79,7 +79,7 @@ def qr_iteration_wilkinson(A, max_iter=10, tol=1e-10):
         for i in range(n - 1):
             if abs(A[i+1, i]) > tol:
                 c, s, r = givens_rotation(A[i, i], A[i+1, i])
-                print("before \n", A)
+#                print("before \n", A)
                 A = apply_givens(A, c, s, i, i+1)
                 A = apply_givens(A.T, c, s, i, i+1).T
 #                print("after \n", A)
