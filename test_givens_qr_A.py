@@ -31,23 +31,56 @@ class TestGivensQR(unittest.TestCase):
 
         np.random.seed(42)
     # Generate test cases: random tridiagonal matrices
-        def generate_tridiagonal_matrix(n, min_val=0, max_val=1):
-            main_diag = np.linspace(1.0, n, num=n)
-            off_diag = np.random.uniform(min_val, max_val, n - 1)
-            A = np.diag(main_diag) 
-            A += np.diag(off_diag, k=1)
-            A += np.diag(off_diag, k=-1)
+        def generate_matrix_with_eigenvalues(n):
+            """Generate a dense matrix with eigenvalues evenly spaced from 1 to
+            n.
+            """
+            evals = np.linspace(1,n+1, n)+ 0.01 * np.random.randn(n)
+            D = np.diag(evals)
+            Q, _ = np.linalg.qr(np.random.randn(n, n))
+            return Q @ D @ Q.T
 
+        def householder_tridiagonalize(A):
+            """
+            Reduce a symmetric matrix to tridiagonal form using Householder
+            transformations.
+            """
+            n = A.shape[0]
+            A = A.copy()
+            
+            for k in range(n-2):
+                x = A[k+1:, k]
+                norm_x = np.linalg.norm(x)
+                
+                if norm_x > 0:
+                    # Compute Householder vector
+                    v = x.copy()
+                    v[0] += np.sign(x[0]) * norm_x
+                    v = v / np.linalg.norm(v)
+                    
+                    # Apply Householder transformation
+                    tau = 2 * np.outer(v, v)
+                    temp = A[k+1:, k:]
+                    A[k+1:, k:] -= tau @ temp
+                    temp = A[k:, k+1:]
+                    A[k:, k+1:] -= temp @ tau.T
             return A
+
+        def generate_tridiagonal_matrix(n):
+            """
+            Helper function to generate test vectors for tridiagonal matrix.
+            """
+            A = generate_matrix_with_eigenvalues(n)
+            return householder_tridiagonalize(A)
 
         # List of test matrices
         test_cases = [
-#            generate_tridiagonal_matrix(3),
+            generate_tridiagonal_matrix(3),
             generate_tridiagonal_matrix(5),
-#            generate_tridiagonal_matrix(10),
-#            generate_tridiagonal_matrix(20),
-#            generate_tridiagonal_matrix(50),
-#            generate_tridiagonal_matrix(100)
+            generate_tridiagonal_matrix(10),
+            generate_tridiagonal_matrix(20),
+            generate_tridiagonal_matrix(50),
+            generate_tridiagonal_matrix(100)
         ]
 
         for idx, A in enumerate(test_cases):
@@ -69,7 +102,6 @@ class TestGivensQR(unittest.TestCase):
                 ref_evecs = ref_evecs[:, sort_indices]
 
                 #print(computed_evals, ref_evals)
-                print(computed_evecs, ref_evecs[0,:])
                 # Assert that the eigenvalues are close
 #                print(np.linalg.cond(A))
                 np.testing.assert_allclose(
