@@ -55,8 +55,8 @@ def benchmark_solvers(sizes):
         
         # Time scipy solver
         start_time = time.time()
-        eigvals_scipy, evecs_scipy =linalg.eigh_tridiagonal(main_diag,off_diag, 
-                                                           select='a')
+        eigvals_scipy, evecs_scipy =linalg.eigh_tridiagonal(main_diag,off_diag,
+                                                            select='a')
         scipy_time = time.time() - start_time
         times_scipy.append(scipy_time)
         
