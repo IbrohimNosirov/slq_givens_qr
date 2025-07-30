@@ -78,10 +78,10 @@ def qr_iteration_wilkinson(A, max_iter=1000, tol=1e-10):
         # QR decomposition using Givens rotations
         for i in range(n - 1):
             if abs(A[i+1, i]) > tol:
-                c, s, r = givens_rotation(A[i, i], A[i+1, i])
+                c, s, r = givens_rotation(A[i+1, i], A[i+2, i])
 #                print("before \n", A)
-                A = apply_givens(A, c, s, i, i+1)
-                A = apply_givens(A.T, c, s, i, i+1).T
+                A = apply_givens(A, c, s, i+1, i+2)
+                A = apply_givens(A.T, c, s, i+1, i+2).T
 #                print("after \n", A)
                 givens_rotations.append((c, s, i, i+1))
 

@@ -1,5 +1,6 @@
 import numpy as np
 from numpy import linalg
+import scipy as sc
 import math
 
 # Givens rotation computation
@@ -23,7 +24,6 @@ def givens_rotation(a_i, b_i):
         u = np.sign(b_i) * math.sqrt(1 + tau * tau)
         s = -1 / u
         c = tau / u
-        #c = -s * tau
         r = b_i * u
     return c, s, r
 
@@ -32,10 +32,10 @@ def wilkinson_shift(a, b):
     d = (a[-2] - a[-1])/2
     if abs(d) < 1e-14 and abs(b[-1]) < 1e-14:
         return a[-1]
-    denominator = d + np.sign(d)*np.sqrt(d**2 + b[-1]**2)
+    denominator = d + np.sign(d)*np.sqrt(d*d + b[-1]**2)
     if abs(denominator) < 1e-14:
         return a[-1]
-    shift = a[-1] - (b[-1]**2)/denominator
+    shift = a[-1] - (b[-1]*b[-1])/denominator
     return shift
 
 def make_bulge(a, b, givens_mtrx):
@@ -47,8 +47,7 @@ def make_bulge(a, b, givens_mtrx):
     result = givens_block.T @ T_block @ givens_block
     a[:3] = np.diag(result)
     b[:2] = np.diag(result, k=-1)
-    bulge = result[2,0]
-    return a, b, bulge 
+    return result[2,0]
 
 def cancel_bulge(a, b, bulge, givens_mtrx):
     """last 3x3 block to get rid of bulge."""
@@ -61,11 +60,12 @@ def cancel_bulge(a, b, bulge, givens_mtrx):
     result = givens_block.T @ T_block @ givens_block
     a[-3:] = np.diag(result)
     b[-2:] = np.diag(result, k=-1)
-    bulge = result[2,0]
-    return a, b, bulge
+    return result[2,0]
 
 def move_bulge(a, b, bulge, i, givens_mtrx):
     # assume i >= 1 because i == 0 is only for make_bulge()
+    assert i >= 1, "index too small."
+    assert i < b.size-1, "index too large."
     j = i-1
     T_block = np.diag(a[j:j+4])
     T_block += np.diag(b[j:j+3], k=-1) + np.diag(b[j:j+3], k=1)
@@ -76,22 +76,42 @@ def move_bulge(a, b, bulge, i, givens_mtrx):
     result = givens_block.T @ T_block @ givens_block
     a[j:j+4] = np.diag(result)
     b[j:j+3] = np.diag(result, k=-1)
-    bulge = result[3,1]
-    return a, b, bulge
+    return result[3,1]
 
 # Apply a Givens rotation to the tridiagonal vectors
-def do_bulge_chasing(a, b, c, s, bulge, i):
+def do_bulge_chasing(a, b, evec_row):
     """a givens rotation moves makes a bulge in the first iteration and cancels
-    it in the last iteration. As such iter 1,n are 3x3 operations. everything in
+    it in the last iteration. As such iter 1, n are 3x3 operations. everything in
     between are 4x4 operations. """
+
+    assert a.size - b.size == 1
+
+    shift = wilkinson_shift(a, b)
+    x = a[0] - shift
+    z = b[0]
+    c, s, _ = givens_rotation(x, z)
+    apply_givens_to_evec_row(evec_row, c, s, 0)
     givens_mtrx = np.array([[c, s], [-s, c]])
-    if i == 0:
-        a, b, bulge = make_bulge(a, b, givens_mtrx)
-    elif i == b.size - 1:
-        a, b, bulge = cancel_bulge(a, b, bulge, givens_mtrx)
-    else:
-        a, b, bulge = move_bulge(a, b, bulge, i, givens_mtrx)
-    return a, b, bulge
+    bulge = make_bulge(a, b, givens_mtrx)
+
+    for i in range(1, b.size-1):
+        c, s, _ = givens_rotation(x, z)
+        apply_givens_to_evec_row(evec_row, c, s, i)
+        givens_mtrx = np.array([[c, s], [-s, c]])
+
+        bulge = move_bulge(a, b, bulge, i, givens_mtrx)
+
+        x = b[i]
+        z = bulge
+
+    c, s, _ = givens_rotation(x, z)
+    apply_givens_to_evec_row(evec_row, c, s, b.size-1)
+    givens_mtrx = np.array([[c, s], [-s, c]])
+
+    bulge = cancel_bulge(a, b, bulge, givens_mtrx)
+
+    assert np.abs(bulge) < 1e-15
+    return a, b
 
 # Updates Q (Gm Gm-1 ... G1).T e_1 by applying a single Givens rotation
 def apply_givens_to_evec_row(evec_row, c, s, i):
@@ -100,9 +120,8 @@ def apply_givens_to_evec_row(evec_row, c, s, i):
     tau2 = evec_row[i+1]
     evec_row[i]   = c*tau1 - s*tau2
     evec_row[i+1] = s*tau1 + c*tau2
-    return evec_row
 
-def qr_tridiag(a, b, max_iter=1000, tol=1e-6):
+def qr_tridiag(a, b, max_iter=100, tol=1e-6):
     """QR iteration with Wilkinson shift for tridiagonal matrices."""
     n = len(a)
     a = a.copy()
@@ -114,21 +133,16 @@ def qr_tridiag(a, b, max_iter=1000, tol=1e-6):
     for iter in range(max_iter):
         if iter == max_iter-1:
             print("hit max_iteration")
+            break
         if (np.max(np.abs(b)) < tol):
             print("stopped at iteration", iter)
             break
-        shift = wilkinson_shift(a, b)
-        #a[0] -= shift
-        bulge = 0.0
-        x = a[0]
-        z = b[0]
         # [1:n-1] but with zero indexing -> [0:n-1)
-        for i in range(n-1):
-            c, s, _ = givens_rotation(x, z)
-            a, b, bulge = do_bulge_chasing(a, b, c, s, bulge, i)
-            evec_row = apply_givens_to_evec_row(evec_row, c, s, i)
-            x = b[i]
-            z = bulge
-        #a[0] += shift
+        a, b = do_bulge_chasing(a, b, evec_row)
     eigvals = a 
     return eigvals, evec_row
+
+a = np.linspace(1, 4, 4)
+b = np.ones(3)
+print(sc.linalg.eigh_tridiagonal(a,b, eigvals_only=False, lapack_driver='stemr'))
+print(qr_tridiag(a,b))
