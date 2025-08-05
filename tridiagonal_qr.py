@@ -1,3 +1,7 @@
+# status update as of 2025-07-29: givens rotation seems to work (checked with
+                                                                 # wikipedia)
+# bulge is created, propagated, and deleted properly.
+
 import numpy as np
 from numpy import linalg
 import scipy as sc
@@ -42,11 +46,13 @@ def make_bulge(a, b, givens_mtrx):
     """first 3x3 block to make bulge."""
     T_block = np.diag(a[:3]) 
     T_block += np.diag(b[:2], k=-1) + np.diag(b[:2], k=1)
+    #print("make bulge before ", T_block)
     givens_block = np.eye(3)
     givens_block[:2,:2] = givens_mtrx
     result = givens_block.T @ T_block @ givens_block
     a[:3] = np.diag(result)
     b[:2] = np.diag(result, k=-1)
+    #print("make bulge after ", result)
     return result[2,0]
 
 def cancel_bulge(a, b, bulge, givens_mtrx):
@@ -55,6 +61,7 @@ def cancel_bulge(a, b, bulge, givens_mtrx):
     T_block += np.diag(b[-2:], k=-1) + np.diag(b[-2:], k=1)
     T_block[2,0] = bulge
     T_block[0,2] = T_block[2,0]
+    #print("cancel bulge before ", T_block)
     givens_block = np.eye(3)
     givens_block[1:,1:] = givens_mtrx
     result = givens_block.T @ T_block @ givens_block
@@ -71,9 +78,12 @@ def move_bulge(a, b, bulge, i, givens_mtrx):
     T_block += np.diag(b[j:j+3], k=-1) + np.diag(b[j:j+3], k=1)
     T_block[2,0] = bulge
     T_block[0,2] = T_block[2,0]
+    #print("T_block before ", T_block)
     givens_block = np.eye(4)
     givens_block[1:-1,1:-1] = givens_mtrx
+    #print("givens_block", givens_block)
     result = givens_block.T @ T_block @ givens_block
+    #print("T_block after ", result)
     a[j:j+4] = np.diag(result)
     b[j:j+3] = np.diag(result, k=-1)
     return result[3,1]
@@ -93,11 +103,14 @@ def do_bulge_chasing(a, b, evec_row):
     apply_givens_to_evec_row(evec_row, c, s, 0)
     givens_mtrx = np.array([[c, s], [-s, c]])
     bulge = make_bulge(a, b, givens_mtrx)
+    x = b[0]
+    z = bulge
 
     for i in range(1, b.size-1):
         c, s, _ = givens_rotation(x, z)
         apply_givens_to_evec_row(evec_row, c, s, i)
-        givens_mtrx = np.array([[c, s], [-s, c]])
+        givens_mtrx = np.array([[c, s],
+                               [-s, c]])
 
         bulge = move_bulge(a, b, bulge, i, givens_mtrx)
 
@@ -121,7 +134,7 @@ def apply_givens_to_evec_row(evec_row, c, s, i):
     evec_row[i]   = c*tau1 - s*tau2
     evec_row[i+1] = s*tau1 + c*tau2
 
-def qr_tridiag(a, b, max_iter=100, tol=1e-6):
+def qr_tridiag(a, b, max_iter=1000, tol=1e-8):
     """QR iteration with Wilkinson shift for tridiagonal matrices."""
     n = len(a)
     a = a.copy()
@@ -139,10 +152,11 @@ def qr_tridiag(a, b, max_iter=100, tol=1e-6):
             break
         # [1:n-1] but with zero indexing -> [0:n-1)
         a, b = do_bulge_chasing(a, b, evec_row)
+#        print("b ", b)
     eigvals = a 
     return eigvals, evec_row
 
-a = np.linspace(1, 4, 4)
-b = np.ones(3)
+a = np.linspace(1, 100, 100)
+b = np.ones(99)
 print(sc.linalg.eigh_tridiagonal(a,b, eigvals_only=False, lapack_driver='stemr'))
 print(qr_tridiag(a,b))
