@@ -2,15 +2,16 @@ using LinearAlgebra
 using Test
 
 # TODO: use @views to access a and b.
+# use Givens for Givens rotation
 # make a T_block and givens_mtrx to carry around for in-place operations.
 
 function givens(x :: Float64, z :: Float64)
-    if z == 0
+    if z == 0.0
         c = sign(x)
-        s = 0
+        s = 0.0
         r = abs(x)
-    elseif x == 0
-        c = 0
+    elseif x == 0.0
+        c = 0.0
         s = -sign(z)
         r = abs(z)
     elseif abs(x) > abs(z)
@@ -60,7 +61,7 @@ let
 #    print(wilkinson_shift(a,b))
 end
 
-function make_bulge(a :: Vector{Float64}, b :: Vector{Float64},
+function make_bulge!(a :: Vector{Float64}, b :: Vector{Float64},
                     givens_mtrx :: Matrix{Float64})
     T_block  = diagm(0 => a[1:3], -1 => b[1:2], 1 => b[1:2])
     givens_block = diagm(0 => ones(3))
@@ -77,10 +78,10 @@ let
     b = ones(9)
     c, s, r = givens(a[1], b[1])
     givens_mtrx = [[c, -s] [s, c]]
-    println("make bulge ", make_bulge(a, b, givens_mtrx))
+    println("make bulge ", make_bulge!(a, b, givens_mtrx))
 end
 
-function cancel_bulge(a :: Vector{Float64}, b :: Vector{Float64},
+function cancel_bulge!(a :: Vector{Float64}, b :: Vector{Float64},
                       bulge :: Float64, givens_mtrx :: Matrix{Float64})
   T_block = diagm(0 => a[end-2:end], -1 => b[end-1:end], 1 => b[end-1:end])
   T_block[3,1], T_block[1,3] = bulge, bulge
@@ -100,11 +101,11 @@ let
     c, s, r = givens(a[1], b[1])
     givens_mtrx = [[c, -s] [s, c]]
     bulge = 3.0
-    println("cancel bulge ", cancel_bulge(a, b, bulge, givens_mtrx))
+    println("cancel bulge ", cancel_bulge!(a, b, bulge, givens_mtrx))
 end
 
 # TODO: pass outside this function: j = i - 1
-function move_bulge(a :: Vector{Float64}, b :: Vector{Float64},
+function move_bulge!(a :: Vector{Float64}, b :: Vector{Float64},
     bulge :: Float64, j :: Int64, givens_mtrx :: Matrix{Float64})
     @assert j >= 1 "index too small."
     @assert j < size(b)[1] "index too large."
@@ -126,10 +127,18 @@ let
     c, s, r = givens(a[1], b[1])
     givens_mtrx = [[c, -s] [s, c]]
     bulge = 3.0
-    println("move bulge ", move_bulge(a, b, bulge, 7, givens_mtrx))
+    println("move bulge ", move_bulge!(a, b, bulge, 7, givens_mtrx))
 end
 
-function do_bulge_chasing(a :: Vector{Float64}, b :: Vector{Float64},
+function apply_givens_to_evec_row!(evec_row :: Vector{Float64}, c :: Float64,
+    s :: Float64, i :: Int64)
+    tau1 = evec_row[i]
+    tau2 = evec_row[i+1]
+    evec_row[i]   = c*tau1 - s*tau2
+    evec_row[i+1] = s*tau1 + c*tau2
+end
+
+function do_bulge_chasing!(a :: Vector{Float64}, b :: Vector{Float64},
     evec_row ::Vector{Float64})
     #=a givens rotation moves makes a bulge in the first iteration and cancels
     it in the last iteration. As such iter 1, n are 3x3 operations. everything in
@@ -140,30 +149,30 @@ function do_bulge_chasing(a :: Vector{Float64}, b :: Vector{Float64},
     x = a[1] - shift
     z = b[1]
     c, s, _ = givens(x, z)
-    #apply_givens_to_evec_row(evec_row, c, s, 0)
+    apply_givens_to_evec_row!(evec_row, c, s, 1)
     givens_mtrx = [[c, -s] [s, c]]
-    bulge = make_bulge(a, b, givens_mtrx)
+    bulge = make_bulge!(a, b, givens_mtrx)
     x = b[1]
     z = bulge
 
     for i = 1:size(b)[1]-2
         c, s, _ = givens(x, z)
-        #apply_givens_to_evec_row(evec_row, c, s, i)
+        apply_givens_to_evec_row!(evec_row, c, s, i+1)
         givens_mtrx = [[c, -s] [s, c]]
-        bulge = move_bulge(a, b, bulge, i, givens_mtrx)
+        bulge = move_bulge!(a, b, bulge, i, givens_mtrx)
         x = b[i+1]
         z = bulge
     end
     c, s, _ = givens(x, z)
-    #apply_givens_to_evec_row(evec_row, c, s, b.size-1)
+    apply_givens_to_evec_row!(evec_row, c, s, size(b)[1]-1)
     givens_mtrx = [[c, -s] [s, c]]
 
-    bulge = cancel_bulge(a, b, bulge, givens_mtrx)
+    bulge = cancel_bulge!(a, b, bulge, givens_mtrx)
     @assert abs(bulge) < 1e-15
     a, b
 end
 
-function qr_tridiag(a :: Vector{Float64}, b :: Vector{Float64}, max_iter=1000,
+function qr_tridiag!(a :: Vector{Float64}, b :: Vector{Float64}, max_iter=1000,
     tol=1e-8)
     n = size(a)[1]
     evec_row = zeros(n)
@@ -178,13 +187,15 @@ function qr_tridiag(a :: Vector{Float64}, b :: Vector{Float64}, max_iter=1000,
             println("stopped at iteration ", iter)
             break
         end
-        a, b = do_bulge_chasing(a, b, evec_row)
+        a, b = do_bulge_chasing!(a, b, evec_row)
     end
-    a
+    a, evec_row
 end
 
 let
     a = collect(range(1, 100, 10))
     b = ones(9)
-    println(qr_tridiag(a,b))
+    evals, evec_row = qr_tridiag!(a,b)
+    println("evals ", evals)
+    println("evec_row ", evec_row)
 end
