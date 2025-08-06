@@ -112,7 +112,6 @@ def do_bulge_chasing(a, b, evec_row):
     givens_mtrx = np.array([[c, s], [-s, c]])
 
     bulge = cancel_bulge(a, b, bulge, givens_mtrx)
-
     assert np.abs(bulge) < 1e-15
     return a, b
 
@@ -142,7 +141,6 @@ def qr_tridiag(a, b, max_iter=1000, tol=1e-8):
             break
         # [1:n-1] but with zero indexing -> [0:n-1)
         a, b = do_bulge_chasing(a, b, evec_row)
-#        print("b ", b)
     eigvals = a 
     return eigvals, evec_row
 
@@ -157,7 +155,8 @@ print(qr_tridiag(a,b))
 #print("shift ", wilkinson_shift(a,b))
 #c, s, r = givens_rotation(a[0], b[0])
 #givens_mtrx = np.array([[c, s], [-s, c]])
-##print("make bulge ", make_bulge(a, b, givens_mtrx))
+#print("make bulge ", make_bulge(a, b, givens_mtrx))
+
 #bulge = 3.0
-##print("cancel bulge ", cancel_bulge(a, b, bulge, givens_mtrx))
+#print("cancel bulge ", cancel_bulge(a, b, bulge, givens_mtrx))
 #print("move bulge ", move_bulge(a, b, bulge, 7, givens_mtrx))
