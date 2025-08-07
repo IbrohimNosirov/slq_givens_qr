@@ -1,13 +1,4 @@
 using LinearAlgebra
-#=
-TODO:
-- Diagonal doesn't allocate vs diagm, which does.
-- what is the relationship between tol and norm(b)?
--check for type stability. Most of the time is spent in compilation.
-DONE:
--make a T_block and givens_mtrx to carry around for in-place operations.
--use @views to access a and b -> ends up costing more in garbage collection
-=#
 function givens_rotation(x :: Float64, z :: Float64)
     if z == 0.0
         c = sign(x)
@@ -49,7 +40,7 @@ function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64)
     a1_tmp = c*(a[1]*c - b[1]*s) - s*(b[1]*c - a[2]*s)
     a2_tmp = s*(a[1]*s - b[1]*c) + c*(b[1]*s + a[2]*c)
-    b[1] = c*(a[1]*s - b[1]*c) - s*(b[1]*s + a[2]*c)
+    b[1] = c*(a[1]*s + b[1]*c) - s*(b[1]*s + a[2]*c)
     bulge = -b[2]*s
     b[2] = c*b[2]
     a[1] = a1_tmp
@@ -58,30 +49,33 @@ function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     bulge
 end
 
-function cancel_bulge!(T_block :: AbstractMatrix, a :: AbstractVector,
-    b :: AbstractVector, bulge :: Float64, G :: LinearAlgebra.Givens{Float64})
-    T_block = diagm(0 => a[end-2:end], -1 => b[end-1:end], 1 => b[end-1:end])
-    T_block[3,1], T_block[1,3] = bulge, bulge
-    T_block = G * T_block * G'
-    a[end-2:end] = diag(T_block)
-    b[end-1:end] = diag(T_block, -1)
+function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
+    c::Float64, s::Float64, bulge::Float64)
+    a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
+    a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
+    b1_tmp = b[1]*c - bulge*s
 
-    T_block[3, 1]
+    b[2] = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
+    bulge = b[1]*s + bulge*c
+    a[1] = a1_tmp
+    a[2] = a2_tmp
+    b[1] = b1_tmp
+
+    bulge
 end
 
-function move_bulge!(T_block :: AbstractMatrix, a :: AbstractVector,
-    b :: AbstractVector, bulge :: Float64, j :: Int64,
-    G :: LinearAlgebra.Givens{Float64})
-    @assert j >= 1 "index too small."
-    @assert j < size(b)[1] "index too large."
-    T_block = diagm(0 => a[j:j+3], 1 => b[j:j+2], -1 => b[j:j+2])
-    T_block[3, 1], T_block[1, 3] = bulge, bulge
-    T_block[4, 2], T_block[2, 4] = 0.0, 0.0 
-    T_block = G * T_block * G'
-    a[j:j+3] = diag(T_block)
-    b[j:j+2] = diag(T_block, -1)
+function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
+    c::Float64, s::Float64, bulge::Float64)
+    a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
+    a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
+    b[1] = b[1]*c - bulge*s
+    b[2] = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
+    bulge  = -s*b[3]
+    b[3] = c*b[3]
+    a[1] = a1_tmp
+    a[2] = a2_tmp
 
-    T_block[4, 2]
+    bulge
 end
 
 function apply_givens_to_evec_row!(evec_row :: AbstractVector, c :: Float64,
@@ -92,11 +86,13 @@ function apply_givens_to_evec_row!(evec_row :: AbstractVector, c :: Float64,
     evec_row[i+1] = s*tau1 + c*tau2
 end
 
-function do_bulge_chasing!(T_block :: AbstractMatrix, a :: AbstractVector,
-    b :: AbstractVector, evec_row ::AbstractVector)
+function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
+    evec_row ::AbstractVector)
+    
     #=a givens rotation moves makes a bulge in the first iteration and cancels
     it in the last iteration. As such iter 1, n are 3x3 operations. everything
     in between are 4x4 operations.=#
+
     @assert size(a)[1] - size(b)[1] == 1
 
     shift = wilkinson_shift(a[end], a[end-1], b[end])
@@ -104,42 +100,43 @@ function do_bulge_chasing!(T_block :: AbstractMatrix, a :: AbstractVector,
     x = a[1] - shift
     z = b[1]
     c, s = givens_rotation(x, z)
-    #apply_givens_to_evec_row!(evec_row, c, s, 1)
+    apply_givens_to_evec_row!(evec_row, c, s, 1)
     bulge = make_bulge!(view(a, 1:2), view(b, 1:2), c, s)
     x = b[1]
     z = bulge
 
-    for i = 2:n-1
-        G, _ = givens(x, z, 2, 3)
-    #    apply_givens_to_evec_row!(evec_row, c, s, i)
-        bulge = move_bulge!(T_block, a, b, bulge, i-1, G)
-        x = b[i]
+    for i = 1:n-2
+        c, s = givens_rotation(x, z)
+        apply_givens_to_evec_row!(evec_row, c, s, i+1)
+        bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
+        x = b[i+1]
         z = bulge
     end
-    G, _ = givens(x, z, 2, 3)
-    #apply_givens_to_evec_row!(evec_row, c, s, n-1)
-    #givens_mtrx = [[c, -s] [s, c]]
+    c, s = givens_rotation(x, z)
+    apply_givens_to_evec_row!(evec_row, c, s, n)
 
-    bulge = cancel_bulge!(view(T_block, 2:4, 2:4), a, b, bulge, G)
+    bulge = cancel_bulge!(view(a, n:n+1), view(b, n-1:n), c, s, bulge)
     @assert abs(bulge) < 1e-15
 end
 
-function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, max_iter=1000,
+function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, max_iter=100000,
     tol=1e-8)
     n = size(a)[1]
     evec_row = zeros(n)
     evec_row[1] = 1.0
-    T_block = zeros(4,4)
 
-    for iter = 1:2000
-#        if iter == max_iter
-#            println("hit max_iteration")
-#            break
-#        end
-#        if norm(b, Inf) < tol
-#            println("stopped at iteration ", iter)
-#            break
-#        end
-        do_bulge_chasing!(T_block, a, b, evec_row)
+    for iter = 1:max_iter
+        if iter == max_iter
+            println("hit max_iteration")
+            break
+        end
+        if iter % 100 == 0
+            if norm(b, Inf) < tol
+                println("stopped at iteration ", iter)
+                break
+            end
+        end
+        do_bulge_chasing!(a, b, evec_row)
     end
+    evec_row
 end
