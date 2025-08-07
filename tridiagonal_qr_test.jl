@@ -2,14 +2,12 @@ using LinearAlgebra
 using Test
 include("tridiagonal_qr.jl")
 
-
 #@testset "Givens rotation test " begin
 #    # 1 3
 #    # 2 4
 #    A = [[1., 2.] [3., 4.]]
-#    c, s, r = givens(1., 2.)
-#    givens_mtrx = [[c, -s] [s, c]]
-#    A = givens_mtrx' * A
+#    G, _ = givens(1., 2., 1, 2)
+#    A = G * A
 #    @test A[2,1] ≈ 0
 #end
 
@@ -52,12 +50,12 @@ include("tridiagonal_qr.jl")
 let
     a = collect(range(1, 100, 10))
     b = ones(9)
-    evals_givens, evec_row_givens = @time qr_tridiag!(a,b)
+    @time qr_tridiag!(a,b)
+    println("evals_givens ", a)
     a = collect(range(1, 100, 10))
     b = ones(9)
     evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a,b))
-    println("evals_givens ", evals_givens)
-    println("evec_row_givens ", evec_row_givens)
+#    println("evec_row_givens ", evec_row_givens)
     println("evals_stemr ", evals_stemr)
-    println("evec_row_stemr ", evec_row_stemr[1,:])
+#    println("evec_row_stemr ", evec_row_stemr[1,:])
 end
