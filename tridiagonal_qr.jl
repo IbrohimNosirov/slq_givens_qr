@@ -8,6 +8,27 @@ DONE:
 -make a T_block and givens_mtrx to carry around for in-place operations.
 -use @views to access a and b -> ends up costing more in garbage collection
 =#
+function givens_rotation(x :: Float64, z :: Float64)
+    if z == 0.0
+        c = sign(x)
+        s = 0.0
+    elseif x == 0.0
+        c = 0.0
+        s = -sign(z)
+    elseif abs(x) > abs(z)
+        tau = z / x
+        u = sign(x) * sqrt(1 + tau * tau)
+        c = 1 / u
+        s = -c * tau
+    else
+        tau = x / z
+        u = sign(z) * sqrt(1 + tau*tau)
+        s = -1 / u
+        c = tau / u
+    end
+
+    c, s
+end
 
 function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
     # a1 last index, a2 second to last index, b last index.
@@ -24,15 +45,17 @@ function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
     shift
 end
 
-function make_bulge!(a :: AbstractVector, b :: AbstractVector,
-                     c :: Float64, s :: Float64)
-    T_block  = diagm(0 => a[1:3], -1 => b[1:2], 1 => b[1:2])
-    T_block[3,1], T_block[1,3] = 0.0, 0.0
-    T_block = G * T_block * G'
-    a[1:3] = diag(T_block)
-    b[1:2] = diag(T_block, -1)
+function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
+    c::Float64, s::Float64)
+    a1_tmp = c*(a[1]*c - b[1]*s) - s*(b[1]*c - a[2]*s)
+    a2_tmp = s*(a[1]*s - b[1]*c) + c*(b[1]*s + a[2]*c)
+    b[1] = c*(a[1]*s - b[1]*c) - s*(b[1]*s + a[2]*c)
+    bulge = -b[2]*s
+    b[2] = c*b[2]
+    a[1] = a1_tmp
+    a[2] = a2_tmp
 
-    T_block[3,1]
+    bulge
 end
 
 function cancel_bulge!(T_block :: AbstractMatrix, a :: AbstractVector,
@@ -80,9 +103,9 @@ function do_bulge_chasing!(T_block :: AbstractMatrix, a :: AbstractVector,
     n = size(b)[1]
     x = a[1] - shift
     z = b[1]
-    G, _ = givens(x, z, 1, 2)
+    c, s = givens_rotation(x, z)
     #apply_givens_to_evec_row!(evec_row, c, s, 1)
-    bulge = make_bulge!(view(T_block, 1:3, 1:3), a, b, G)
+    bulge = make_bulge!(view(a, 1:2), view(b, 1:2), c, s)
     x = b[1]
     z = bulge
 
