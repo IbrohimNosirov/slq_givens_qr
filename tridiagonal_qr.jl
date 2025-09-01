@@ -1,4 +1,3 @@
-# I think I can reasonably expect 16 digits from QR algorithms
 using LinearAlgebra
 function givens_rotation(x :: Float64, z :: Float64)
     if z == 0.0
@@ -38,51 +37,66 @@ function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
 end
 
 function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
-    c::Float64, s::Float64)
+    c::Float64, s::Float64, bulge::Float64)
+
+    @assert bulge      == 0.0 "bulge must be zero before initialization."
+    @assert size(a)[1] == 2   "input is not a 2x2 block due to input a."
+    @assert size(b)[1] == 2   "input is not a 2x2 block due to input b."
+
     a1_tmp = c*(a[1]*c - b[1]*s) - s*(b[1]*c - a[2]*s)
     a2_tmp = s*(a[1]*s - b[1]*c) + c*(b[1]*s + a[2]*c)
-    b[1] = c*(a[1]*s + b[1]*c) - s*(b[1]*s + a[2]*c)
-    bulge = -b[2]*s
-    b[2] = c*b[2]
-    a[1] = a1_tmp
-    a[2] = a2_tmp
+    b[1]   = c*(a[1]*s + b[1]*c) - s*(b[1]*s + a[2]*c)
+    bulge  = -b[2]*s
+    b[2]   = c*b[2]
+    a[1]   = a1_tmp
+    a[2]   = a2_tmp
 
+    @assert bulge != 0.0 "bulge was not properly initialized."
     bulge
 end
 
 function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
+
+    @assert abs(bulge) >= 1e-16 "bulge cannot be zero before cancellation."
+    @assert size(a)[1] == 2     "input is not a 2x2 block due to a."
+    @assert size(b)[1] == 2     "input is not a 2x2 block due to b."
+
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
     b1_tmp = b[1]*c - bulge*s
 
-    b[2] = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
-    bulge = b[1]*s + bulge*c
-    a[1] = a1_tmp
-    a[2] = a2_tmp
-    b[1] = b1_tmp
+    b[2]   = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
+    bulge  = b[1]*s + bulge*c
+    a[1]   = a1_tmp
+    a[2]   = a2_tmp
+    b[1]   = b1_tmp
 
-    bulge
+    @assert abs(bulge) < 1e-15 "bulge must be zero after cancellation."
 end
 
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
+
+    @assert abs(bulge) >= 1e-15 "bulge cannot be 0 before movement."
+
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
-    b[1] = b[1]*c - bulge*s
-    b[2] = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
+    b[1]   = b[1]*c - bulge*s
+    b[2]   = c*(a[1]*s + b[2]*c) - s*(b[2]*s + a[2]*c)
     bulge  = -s*b[3]
-    b[3] = c*b[3]
-    a[1] = a1_tmp
-    a[2] = a2_tmp
+    b[3]   = c*b[3]
+    a[1]   = a1_tmp
+    a[2]   = a2_tmp
 
+    @assert abs(bulge) >= 1e-16 "bulge cannot be 0 after movement."
     bulge
 end
 
 function apply_givens_to_evec_row!(evec_row :: AbstractVector, c :: Float64,
     s :: Float64, i :: Int64)
-    tau1 = evec_row[i]
-    tau2 = evec_row[i+1]
+    tau1          = evec_row[i]
+    tau2          = evec_row[i+1]
     evec_row[i]   = c*tau1 - s*tau2
     evec_row[i+1] = s*tau1 + c*tau2
 end
@@ -100,40 +114,41 @@ function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
     x = a[1] - shift
     z = b[1]
     c, s = givens_rotation(x, z)
-#    apply_givens_to_evec_row!(evec_row, c, s, 1)
-    bulge = make_bulge!(view(a, 1:2), view(b, 1:2), c, s)
+    apply_givens_to_evec_row!(evec_row, c, s, 1)
+    bulge = 0.0
+    bulge = make_bulge!(view(a, 1:2), view(b, 1:2), c, s, bulge)
+    println("line 118 bulge ", bulge)
     x = b[1]
     z = bulge
 
     for i = p:q-2
         c, s = givens_rotation(x, z)
-#        apply_givens_to_evec_row!(evec_row, c, s, i+1)
+        apply_givens_to_evec_row!(evec_row, c, s, i+1)
         bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
         # check for deflation
             #        TODO: DEFLATION GOES HERE
-#        if abs(b[i]) <= 1e-16*(abs(a[i]) + abs(a[i+1]))
-#            b[i] = 0.0
-#            println("decoupling at index ", i)
+        if abs(b[i]) <= 1e-16*(abs(a[i]) + abs(a[i+1]))
+            b[i] = 0.0
+            println("decoupling at index ", i)
 #            p = 
 #            q = 
-#            if q - p == 2 # base case
-#
-#            else
-#                do_bulge_chasing!(a, b, evec_row, p, q) # big box.
-#                do_bulge_chasing!(a, b, evec_row, p, q) # small box.
-#            end
-#        end
+            if q - p == 2 # base case
+
+            else
+                do_bulge_chasing!(a, b, evec_row, p, q) # big box.
+                do_bulge_chasing!(a, b, evec_row, p, q) # small box.
+            end
+        end
         #TODO: make a call to do_bulge_chasing(a, b, i)
         x = b[i+1]
         z = bulge
     end
     c, s = givens_rotation(x, z)
-#    apply_givens_to_evec_row!(evec_row, c, s, q)
+    apply_givens_to_evec_row!(evec_row, c, s, q)
 
-    bulge = cancel_bulge!(view(a, q:q+1), view(b, q-1:q), c, s, bulge)
-    @assert abs(bulge) < 1e-15
-#    @assert abs(b[q-1]) > 1e-16*(abs(a[q-2]) + abs(a[q-1])) "deflate at index ",
-#    q, abs(b[q-1])
+    cancel_bulge!(view(a, q:q+1), view(b, q-1:q), c, s, bulge)
+    @assert abs(b[q-1]) > 1e-16*(abs(a[q-2]) + abs(a[q-1])) "deflate at index ",
+    q, abs(b[q-1])
 end
 
 function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, max_iter=100000,
