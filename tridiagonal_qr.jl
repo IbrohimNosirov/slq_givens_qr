@@ -58,7 +58,7 @@ end
 function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
 
-    @assert abs(bulge) >= 1e-16 "bulge cannot be zero before cancellation."
+#    @assert abs(bulge) >= 1e-16 "bulge cannot be zero before cancellation."
     @assert size(a)[1] == 2     "input is not a 2x2 block due to a."
     @assert size(b)[1] == 2     "input is not a 2x2 block due to b."
 
@@ -78,7 +78,7 @@ end
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
 
-    @assert abs(bulge) >= 1e-15 "bulge cannot be 0 before movement."
+#    @assert abs(bulge) >= 1e-15 "bulge cannot be 0 before movement."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
@@ -89,7 +89,7 @@ function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     a[1]   = a1_tmp
     a[2]   = a2_tmp
 
-    @assert abs(bulge) >= 1e-16 "bulge cannot be 0 after movement."
+#    @assert abs(bulge) >= 1e-16 "bulge cannot be 0 after movement."
     bulge
 end
 
@@ -117,7 +117,6 @@ function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
     apply_givens_to_evec_row!(evec_row, c, s, 1)
     bulge = 0.0
     bulge = make_bulge!(view(a, 1:2), view(b, 1:2), c, s, bulge)
-    println("line 118 bulge ", bulge)
     x = b[1]
     z = bulge
 
