@@ -46,19 +46,21 @@ function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     a1_tmp = c*(a[1]*c - b[1]*s) - s*(b[1]*c - a[2]*s)
     a2_tmp = s*(a[1]*s - b[1]*c) + c*(b[1]*s + a[2]*c)
     b[1]   = c*(a[1]*s + b[1]*c) - s*(b[1]*s + a[2]*c)
-    bulge  = -b[2]*s
-    b[2]   = c*b[2]
+    bulge  = s*-b[2]
+    b[2]   = c* b[2]
     a[1]   = a1_tmp
     a[2]   = a2_tmp
 
-    @assert bulge != 0.0 "bulge was not properly initialized."
+#    @assert abs(bulge) > eps(Float64) "bulge was not properly initialized."
+    #TODO: b[2] can't be zero since it should have been deflated away.
     bulge
 end
 
 function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
 
-    #    @assert abs(bulge) >= eps(Float64) "bulge cannot be zero before cancellation."
+#    @assert abs(bulge) >= eps(Float64) "bulge cannot be zero before \
+#    cancellation."
     @assert size(a)[1] == 2     "input is not a 2x2 block due to a."
     @assert size(b)[1] == 2     "input is not a 2x2 block due to b."
 
@@ -78,7 +80,7 @@ end
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     c::Float64, s::Float64, bulge::Float64)
 
-#    @assert abs(bulge) >= 1e-15 "bulge cannot be 0 before movement."
+#    @assert abs(bulge) >= eps(Float64) "bulge cannot be 0 before movement."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
@@ -103,76 +105,75 @@ end
 
 function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
     evec_row ::AbstractVector, p :: Int64, q :: Int64)
-    
     @assert size(a)[1] - size(b)[1] == 1
-
-    shift = wilkinson_shift(a[q], a[q-1], b[q-1])
-    x = a[p] - shift
-    z = b[p]
-    c, s = givens_rotation(x, z)
-#    apply_givens_to_evec_row!(evec_row, c, s, p)
-    bulge = make_bulge!(view(a, p:p+1), view(b, p:p+1), c, s)
-    x = b[p]
-    z = bulge
-    println("p ", p)
-    println("q ", q)
     if q - p == 2
-        println("2x2 eigensolver should be called now.")
-        evals, evecs = eigen!(SymTridiagonal(view(a,p:q-1), view(b,p:p)))
-        a[p:q-1] = evals
+        println("reached base case.")
+        evals, evecs = eigen!(SymTridiagonal(view(a,p:p+1), view(b,p:p)))
+        a[p:p+1] = evals
         b[p] = 0.0
         # TODO: apply evecs to evec row
         return
     end
+    iteration = 0
 
-    for i = p:q-3
+    while norm(b, Inf) > sqrt(eps(Float64))
+        shift = wilkinson_shift(a[q], a[q-1], b[q-1])
+        x = a[p] - shift
+        z = b[p]
+        iteration += 1
         c, s = givens_rotation(x, z)
-#        apply_givens_to_evec_row!(evec_row, c, s, i) # TODO: CHECK
+    #    apply_givens_to_evec_row!(evec_row, c, s, p)
 
-        bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
+        bulge = make_bulge!(view(a, p:p+1), view(b, p:p+1), c, s)
+        println("bulge ", bulge)
 
-        if abs(b[i]) <= sqrt(eps(Float64))*(abs(a[i]) + abs(a[i+1]))
-            display(b)
-            println("TRIGGER DEFLATION!")
-            b[i] = 0.0
+        x = b[p]
+        z = bulge
 
-            p_large = p
-            q_large = i
-            p_small = i+1 #TODO check
-            q_small = q
+        for i = p:q-3
+            c, s = givens_rotation(x, z)
+    #        apply_givens_to_evec_row!(evec_row, c, s, i) # TODO: CHECK
 
-            do_bulge_chasing!(a, b, evec_row, p_large, q_large) # big box.
-            do_bulge_chasing!(a, b, evec_row, p_small, q_small) # small box.
+            bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
+
+            # TODO: check if it should actually be sqrt() or just eps(Float64).
+            if abs(b[i]) <= sqrt(eps(Float64))*(abs(a[i]) + abs(a[i+1]))
+                println("trigger deflation.")
+                b[i] = 0.0
+
+                p_large = p
+                q_large = i
+                p_small = i+1 #TODO check
+                q_small = q
+                # TODO need more focused work here.
+                if q_large > q_large
+                    println("work on big box", p_large, q_large)
+                    do_bulge_chasing!(a, b, evec_row, p_large, q_large)
+                end
+                println("work on small box", p_small, q_small)
+                do_bulge_chasing!(a, b, evec_row, p_small, q_small) # small box.
+            end
+
+            x = b[i+1]
+            z = bulge
         end
 
-        x = b[i+1]
-        z = bulge
+        c, s = givens_rotation(x, z)
+    #    apply_givens_to_evec_row!(evec_row, c, s, q)
+
+        cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
+        println("iteration ", iteration)
+        display(b)
     end
-
-    c, s = givens_rotation(x, z)
-#    apply_givens_to_evec_row!(evec_row, c, s, q)
-
-    cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
 end
 
-function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, max_iter=1000,
-    tol=1e-8)
+function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
     n = size(a)[1]
+    max_iter = 30
     evec_row = zeros(n)
     evec_row[1] = 1.0
 
-    for iter = 1:max_iter
-        if iter == max_iter
-            println("hit max_iteration")
-            break
-        end
-#        if iter % 100 == 0
-#            if norm(b, Inf) < tol
-#                println("stopped at iteration ", iter)
-#                break
-#            end
-#        end
-        do_bulge_chasing!(a, b, evec_row, 1, n)
-    end
+    do_bulge_chasing!(a, b, evec_row, 1, n)
+
     evec_row
 end

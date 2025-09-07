@@ -49,7 +49,7 @@ let
 #    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a_cold_start,
 #                                    b_cold_start))
 #    println("evals_stemr ", evals_stemr)
-    qr_tridiag!(a_cold_start,b_cold_start)
+    println("evec row", qr_tridiag!(a_cold_start, b_cold_start))
 #    evals = collect(range(1, 100, 100))
 #    b = ones(99)
 #    evec_row = @time qr_tridiag!(evals, b)
@@ -61,5 +61,5 @@ let
 #    println("evals_mine ", evals)
 #    println("evals_stemr ", evals_stemr)
 #    println("evec_row_stemr ", evec_row_stemr[1,:])
-#plot( ((evals - evals_stemr) ./ (abs.(evals_stemr))) )
+#logplot( ((evals - evals_stemr) ./ (abs.(evals_stemr))) )
 end
