@@ -44,22 +44,43 @@ end
 end
 
 let
-    a_cold_start = collect(range(1, 100, 100))
-    b_cold_start = ones(99)
-#    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a_cold_start,
-#                                    b_cold_start))
-#    println("evals_stemr ", evals_stemr)
+    a_cold_start = collect(range(1, 100, 10))
+    b_cold_start = ones(9)
+    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a_cold_start,
+                                    b_cold_start))
+    println("evals_stemr ", evals_stemr)
     println("evec row", qr_tridiag!(a_cold_start, b_cold_start))
-#    evals = collect(range(1, 100, 100))
-#    b = ones(99)
-#    evec_row = @time qr_tridiag!(evals, b)
-#    a = collect(range(1, 100, 100))
-#    b = ones(99)
-#    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a,b))
-#    display((evals .- evals_stemr)./(evals_stemr))
-#    println("evec relative error ", norm(evec_row - evec_row_stemr[1,:])/norm(evec_row_stemr[1,:]))
-#    println("evals_mine ", evals)
-#    println("evals_stemr ", evals_stemr)
-#    println("evec_row_stemr ", evec_row_stemr[1,:])
-#logplot( ((evals - evals_stemr) ./ (abs.(evals_stemr))) )
+    evals = collect(range(1, 100, 100))
+    b = ones(99)
+    evec_row = @time qr_tridiag!(evals, b)
+    println("b ")
+    display(b)
+    a = collect(range(1, 100, 100))
+    b = ones(99)
+    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a,b))
+    y = (evals .- evals_stemr)./evals_stemr
+    x = range(0, 100, 100)
+#    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
+end
+
+let
+    x = 2 * Integer.(round.(collect(10 .^ range(1, 4, length=10))))
+    y1 = zeros(10)
+    y2 = zeros(10)
+    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
+    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
+
+    for i = 1:10
+        a = collect(range(1, x[i]*10, x[i]))
+        b = ones(x[i] - 1)
+        y1[i] = time_eigen(a,b)[2]
+        a = collect(range(1, x[i]*10, x[i]))
+        b = ones(x[i] - 1)
+        y2[i] = time_qr_tridiag(a,b)[2]
+    end
+
+    println("y1 ", y1)
+    println("y2 ", y2)
+    plot(x,  y1, xaxis=:log, yaxis=:log)
+    plot!(x, y2, xaxis=:log, yaxis=:log)
 end
