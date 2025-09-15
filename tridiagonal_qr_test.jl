@@ -2,6 +2,7 @@ using LinearAlgebra
 using Test
 using Plots
 include("tridiagonal_qr.jl")
+include("matrix_gallery.jl")
 
 @testset "Givens rotation test " begin
     # 1 3
@@ -58,29 +59,37 @@ let
     a = collect(range(1, 100, 100))
     b = ones(99)
     evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a,b))
-    y = (evals .- evals_stemr)./evals_stemr
+    y = (sort!(evals) .- sort!(evals_stemr))./sort!(evals_stemr)
     x = range(0, 100, 100)
-#    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
+    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
 
-let
-    x = 2 * Integer.(round.(collect(10 .^ range(1, 4, length=10))))
-    y1 = zeros(10)
-    y2 = zeros(10)
-    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
-    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
+#let
+#    x = Integer.(round.(collect(10 .^ range(1, 4, length=10))))
+#    y1 = zeros(10)
+#    y2 = zeros(10)
+#    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
+#    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
+#
+#    for i = 1:10
+#        a = collect(range(1, x[i]*10, x[i]))
+#        b = ones(x[i] - 1)
+#        y1[i] = time_eigen(a,b)[2]
+#        a = collect(range(1, x[i]*10, x[i]))
+#        b = ones(x[i] - 1)
+#        y2[i] = time_qr_tridiag(a,b)[2]
+#    end
+#
+#    println("y1 ", y1)
+#    println("y2 ", y2)
+#    plot(x,  y1, xaxis=:log, yaxis=:log)
+#    plot!(x, y2, xaxis=:log, yaxis=:log)
+#end
 
-    for i = 1:10
-        a = collect(range(1, x[i]*10, x[i]))
-        b = ones(x[i] - 1)
-        y1[i] = time_eigen(a,b)[2]
-        a = collect(range(1, x[i]*10, x[i]))
-        b = ones(x[i] - 1)
-        y2[i] = time_qr_tridiag(a,b)[2]
-    end
-
-    println("y1 ", y1)
-    println("y2 ", y2)
-    plot(x,  y1, xaxis=:log, yaxis=:log)
-    plot!(x, y2, xaxis=:log, yaxis=:log)
-end
+#let
+#    n = 100
+#    lo = 1.0
+#    hi = 1000.0
+#    eps = 10.0
+#    even_matrix(n)
+#end

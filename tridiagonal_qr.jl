@@ -1,4 +1,5 @@
 using LinearAlgebra
+using DataStructures
 
 function givens_rotation(x :: Float64, z :: Float64)
     if z == 0.0
@@ -78,8 +79,8 @@ function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
 end
 
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
-    c::Float64, s::Float64, bulge::Float64)
-
+                     c::Float64, s::Float64,
+                     bulge::Float64)
 #    @assert abs(bulge) >= eps(Float64) "bulge cannot be 0 before movement."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
@@ -113,68 +114,66 @@ function apply_evec_to_evec_row!(evec_row :: AbstractVector,
     evec_row[i+1] = v2*tau1 + v4*tau2
 end
 
-function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
-    evec_row ::AbstractVector, p :: Int64, q :: Int64)
+function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
+                           p::Int64, q::Int64,
+                           evec_row::AbstractVector,
+                           bounds_stack::Stack)
     @assert size(a)[1] - size(b)[1] == 1
 
-    if q - p < 2
+    if q - p == 0
+        pop!(bounds_stack)
         return
     end
-    
-    if q - p == 2
-        #println("reached base case.")
+
+    if q - p == 1
+        println("reached base case!")
         evals, evecs = eigen!(SymTridiagonal(view(a,p:p+1), view(b,p:p)))
         a[p:p+1] = evals
         b[p] = 0.0
         apply_evec_to_evec_row!(evec_row, evecs[1,1], evecs[1,2],
                                           evecs[2,1], evecs[2,2], p)
+        pop!(bounds_stack)
         return
     end
 
-    while norm(b, Inf) > sqrt(eps(Float64))
-        shift = wilkinson_shift(a[q], a[q-1], b[q-1])
-        x = a[p] - shift
-        z = b[p]
+    shift = wilkinson_shift(a[q], a[q-1], b[q-1])
+    x = a[p] - shift
+    z = b[p]
+    c, s = givens_rotation(x, z)
+    apply_givens_to_evec_row!(evec_row, c, s, p)
+
+    bulge = make_bulge!(view(a, p:p+1), view(b, p:p+1), c, s)
+
+    x = b[p]
+    z = bulge
+
+    for i = p:q-3
         c, s = givens_rotation(x, z)
-        apply_givens_to_evec_row!(evec_row, c, s, p)
+        apply_givens_to_evec_row!(evec_row, c, s, i+1)
 
-        bulge = make_bulge!(view(a, p:p+1), view(b, p:p+1), c, s)
+        bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
 
-        x = b[p]
+#        if abs(b[i]) <= eps(Float64)*(abs(a[i]) + abs(a[i+1]))
+#            println("trigger deflation.")
+#            b[i] = 0.0
+#
+#            p_large = p
+#            q_large = i
+#            p_small = i+1
+#            q_small = q
+#            pop!(bounds_stack)
+#            push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
+#            push!(bounds_stack, (p_large, q_large))
+#        end
+
+        x = b[i+1]
         z = bulge
-
-        for i = p:q-3
-            c, s = givens_rotation(x, z)
-            apply_givens_to_evec_row!(evec_row, c, s, i+1) # TODO: CHECK
-
-            bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
-
-            # TODO: check if it should actually be sqrt() or just eps(Float64).
-            if abs(b[i]) <= eps(Float64)*(abs(a[i]) + abs(a[i+1]))
-                #println("trigger deflation.")
-                b[i] = 0.0
-
-                p_large = p
-                q_large = i+1
-                p_small = i+1 #TODO check
-                q_small = q
-
-                #println("work on big box ", p_large, " to ", q_large)
-                do_bulge_chasing!(a, b, evec_row, p_large, q_large)
-                #println("work on small box ", p_small, " to ", q_small)
-                do_bulge_chasing!(a, b, evec_row, p_small, q_small) # small box.
-                return
-            end
-
-            x = b[i+1]
-            z = bulge
-        end
-
-        c, s = givens_rotation(x, z)
-        apply_givens_to_evec_row!(evec_row, c, s, q-1)
-
-        cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
     end
+
+    c, s = givens_rotation(x, z)
+    apply_givens_to_evec_row!(evec_row, c, s, q-1)
+
+    cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
 end
 
 function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
@@ -182,7 +181,18 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
     evec_row = zeros(n)
     evec_row[1] = 1.0
 
-    do_bulge_chasing!(a, b, evec_row, 1, n)
+    # TODO: make stack for each step of deflation [[p,q], [p,q], ...].
+    # iterate through each element in the array and run bulge chasing on each
+    # bound. if deflation occurs, add the resulting [p,q] to the stack.
+    bounds_stack = Stack{Tuple{Int64, Int64}}()
+    push!(bounds_stack, (1,n))
+
+    while norm(b, Inf) > sqrt(eps(Float64))
+        @assert !isempty(bounds_stack) display(b)
+        println("bounds stack ", bounds_stack)
+        p, q = first(bounds_stack)
+        do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)
+    end
 
     evec_row
 end
