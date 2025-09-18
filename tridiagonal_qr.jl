@@ -26,7 +26,7 @@ end
 function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
     # a1 last index, a2 second to last index, b last index.
     d = (a2 - a1)/2
-    if abs(d) < 1e-14 && abs(b) < 1e-14
+    if abs(d) < eps(Float64) && abs(b) < eps(Float64)
         return a1
     end
     denominator = d + sign(d)*sqrt(d*d + b*b)
@@ -58,12 +58,12 @@ function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
 end
 
 function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
-    c::Float64, s::Float64, bulge::Float64)
+    c::Float64, s::Float64, bulge::Float64, bounds_stack::Stack, p::Int64, q::Int64)
 
 #    @assert abs(bulge) >= eps(Float64) "bulge cannot be zero before \
 #    cancellation."
-    @assert size(a)[1] == 2     "input is not a 2x2 block due to a."
-    @assert size(b)[1] == 2     "input is not a 2x2 block due to b."
+    @assert size(a)[1] == 2     "input is not a 3x3 block due to a."
+    @assert size(b)[1] == 2     "input is not a 3x3 block due to b."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
@@ -74,6 +74,16 @@ function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     a[1]   = a1_tmp
     a[2]   = a2_tmp
     b[1]   = b1_tmp
+
+    if abs(b[2]) <= eps(Float64)*(abs(a[1]) + abs(a[2]))
+        println("trigger deflation.")
+        b[2] = 0.0
+
+        p_large = p
+        q_large = q-1
+        pop!(bounds_stack)
+        push!(bounds_stack, (p_large, q_large))
+    end
 
     @assert abs(bulge) < eps(Float64) "bulge must be zero after cancellation."
 end
@@ -153,18 +163,18 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
 
         bulge = move_bulge!(view(a, i:i+1), view(b, i:i+2), c, s, bulge)
 
-#        if abs(b[i]) <= eps(Float64)*(abs(a[i]) + abs(a[i+1]))
-#            println("trigger deflation.")
-#            b[i] = 0.0
-#
-#            p_large = p
-#            q_large = i
-#            p_small = i+1
-#            q_small = q
-#            pop!(bounds_stack)
-#            push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
-#            push!(bounds_stack, (p_large, q_large))
-#        end
+        if abs(b[i]) <= eps(Float64)*(abs(a[i]) + abs(a[i+1]))
+            println("trigger deflation.")
+            b[i] = 0.0
+
+            p_large = p
+            q_large = i
+            p_small = i+1
+            q_small = q
+            pop!(bounds_stack)
+            push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
+            push!(bounds_stack, (p_large, q_large))
+        end
 
         x = b[i+1]
         z = bulge
@@ -173,7 +183,7 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
     c, s = givens_rotation(x, z)
     apply_givens_to_evec_row!(evec_row, c, s, q-1)
 
-    cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
+    cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge, bounds_stack, p, q)
 end
 
 function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)

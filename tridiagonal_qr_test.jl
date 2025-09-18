@@ -47,19 +47,27 @@ end
 let
     a_cold_start = collect(range(1, 100, 10))
     b_cold_start = ones(9)
-    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a_cold_start,
+    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a_cold_start,
                                     b_cold_start))
-    println("evals_stemr ", evals_stemr)
-    println("evec row", qr_tridiag!(a_cold_start, b_cold_start))
-    evals = collect(range(1, 100, 100))
-    b = ones(99)
-    evec_row = @time qr_tridiag!(evals, b)
-    println("b ")
-    display(b)
+    evec_row = @time qr_tridiag!(a_cold_start, b_cold_start)
+    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
+    println("stemr evals ", evals_stemr)
+    println("evals ", a_cold_start)
+    y = (sort!(a_cold_start) .- sort!(evals_stemr))./sort!(evals_stemr)
+    x = range(0, 10, 10)
+    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
+end
+
+let
     a = collect(range(1, 100, 100))
     b = ones(99)
-    evals_stemr, evec_row_stemr = @time eigen!(SymTridiagonal(a,b))
-    y = (sort!(evals) .- sort!(evals_stemr))./sort!(evals_stemr)
+    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a,
+                                    b))
+    evec_row = @time qr_tridiag!(a, b)
+    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
+    println("stemr evals ", evals_stemr)
+    println("evals ", a)
+    y = (sort!(a) .- sort!(evals_stemr))./sort!(evals_stemr)
     x = range(0, 100, 100)
     plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
