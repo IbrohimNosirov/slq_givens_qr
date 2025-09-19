@@ -1,6 +1,7 @@
 using LinearAlgebra
 using Test
 using Plots
+
 include("tridiagonal_qr.jl")
 include("matrix_gallery.jl")
 
@@ -32,45 +33,49 @@ end
     @test bulge ≈ 0.1485562705416415
 end
 
-#TODO gets tested implicitly by the assert inside the function.
-
-@testset "move_bulge!() test " begin
-    a = ones(10)
-    a[10] = 0
-    b = ones(9)
-    c, s = givens_rotation(a[1], b[1])
-    bulge = 3.0
-    bulge = move_bulge!(a, b, c, s, bulge)
-    bulge ≈ 0.7071067811865475
-end
+#@testset "move_bulge!() test " begin
+#    a = ones(10)
+#    a[10] = 0
+#    b = ones(9)
+#    c, s = givens_rotation(a[1], b[1])
+#    bulge = 3.0
+#    bulge = move_bulge!(a, b, c, s, bulge)
+#    bulge ≈ 0.7071067811865475
+#end
 
 let
-    a_cold_start = collect(range(1, 100, 10))
-    b_cold_start = ones(9)
+    n = 10
+    a_cold_start = 2 * ones(n)
+    b_cold_start = -1 * ones(n-1)
     evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a_cold_start,
                                     b_cold_start))
+    a_cold_start = 2 * ones(n)
+    b_cold_start = -1 * ones(n-1)
     evec_row = @time qr_tridiag!(a_cold_start, b_cold_start)
-    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
+    sort!(a_cold_start)
+    println("evec_row mine", evec_row)
+    println("evec_row stemr", evecs_stemr[1,:])
     println("stemr evals ", evals_stemr)
     println("evals ", a_cold_start)
-    y = (sort!(a_cold_start) .- sort!(evals_stemr))./sort!(evals_stemr)
-    x = range(0, 10, 10)
+    y = (a_cold_start .- evals_stemr)./abs.(evals_stemr)
+    x = range(1, n, n)
     plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
 
-let
-    a = collect(range(1, 100, 100))
-    b = ones(99)
-    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a,
-                                    b))
-    evec_row = @time qr_tridiag!(a, b)
-    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
-    println("stemr evals ", evals_stemr)
-    println("evals ", a)
-    y = (sort!(a) .- sort!(evals_stemr))./sort!(evals_stemr)
-    x = range(0, 100, 100)
-    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
-end
+#let
+#    a = collect(range(1, 100, 100)) .+ 100.0
+#    b = ones(99)
+#    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a, b))
+#    a = collect(range(1, 100, 100)) .+ 100.0
+#    b = ones(99)
+#    evec_row = @time qr_tridiag!(a, b)
+#    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
+#    println("stemr evals ", evals_stemr)
+#    println("evals ", a)
+#    y = (sort!(a) .- sort!(evals_stemr))./norm(evals_stemr, Inf)
+#    x = range(0, 100, 100)
+#    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
+#end
 
 #let
 #    x = Integer.(round.(collect(10 .^ range(1, 4, length=10))))

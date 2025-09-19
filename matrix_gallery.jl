@@ -1,15 +1,17 @@
 using LinearAlgebra
 using Plots
 using Random
+using RandomMatrices
 
 function tridiag_reduce!(A::AbstractMatrix)
     n = size(A)[1]
     for k = 1:n-2
         x = view(A, k+1:n, k)
-        τk = LinearAlgebra.reflector!(x)
-        LinearAlgebra.reflectorApply!(x, τk, view(A, k+1:n, k+1:n))
-        LinearAlgebra.reflectorApply!(x, τk, view(A, k+1:n, k+1:n)')
+        τ = LinearAlgebra.reflector!(x)
+        LinearAlgebra.reflectorApply!(x, τ, view(A, k+1:n, k+1:n))
+        LinearAlgebra.reflectorApply!(x, τ, view(A, k+1:n, k+1:n)')
     end
+    A
 end
 
 #function gappy_matrix_make(n::Int64, lo::Float64, hi::Float64, num_gaps::Int64)
@@ -55,9 +57,12 @@ function clustered_matrix(n::Int64, lo::Float64, hi::Float64, eps)
 end
 
 function even_matrix(n::Int64)
-    evals = collect(range(1, 10, n))
-    Q = qr!(randn(n,n)).Q
-    A = Q' * diagm(evals) * Q
+    evals = collect(range(1, 100, n))
+    u = randn(n,1)
+    H = I - 2u*u'./(u'*u)
+
+    A = H * diagm(evals) * H'
     tridiag_reduce!(A)
-    A
+    eigen(A)
+#    display(A)
 end
