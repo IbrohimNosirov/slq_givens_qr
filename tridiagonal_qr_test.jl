@@ -44,7 +44,7 @@ end
 #end
 
 let
-    n = 10
+    n = 100
     a_cold_start = 2 * ones(n)
     b_cold_start = -1 * ones(n-1)
     evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a_cold_start,
@@ -53,11 +53,12 @@ let
     b_cold_start = -1 * ones(n-1)
     evec_row = @time qr_tridiag!(a_cold_start, b_cold_start)
     sort!(a_cold_start)
-    println("evec_row mine", evec_row)
-    println("evec_row stemr", evecs_stemr[1,:])
-    println("stemr evals ", evals_stemr)
-    println("evals ", a_cold_start)
-    y = (a_cold_start .- evals_stemr)./abs.(evals_stemr)
+    println("evec difference ", norm(sort!(abs.(evec_row)) - sort!(abs.(evec_row)), Inf))
+#    println("evec_row mine", evec_row)
+#    println("evec_row stemr", evecs_stemr[1,:])
+#    println("stemr evals ", evals_stemr)
+#    println("evals ", a_cold_start)
+    y = (a_cold_start .- evals_stemr)./norm(evals_stemr, Inf)
     x = range(1, n, n)
     plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
@@ -78,18 +79,19 @@ end
 #end
 
 #let
-#    x = Integer.(round.(collect(10 .^ range(1, 4, length=10))))
+#    x = Integer.(round.(collect(10 .^ range(1, 2, length=10))))
 #    y1 = zeros(10)
 #    y2 = zeros(10)
 #    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
 #    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
 #
 #    for i = 1:10
-#        a = collect(range(1, x[i]*10, x[i]))
-#        b = ones(x[i] - 1)
+#        n = x[i]
+#        a = 2 * ones(n)
+#        b = -1 * ones(n-1)
 #        y1[i] = time_eigen(a,b)[2]
-#        a = collect(range(1, x[i]*10, x[i]))
-#        b = ones(x[i] - 1)
+#        a = 2 * ones(n)
+#        b = -1 * ones(n-1)
 #        y2[i] = time_qr_tridiag(a,b)[2]
 #    end
 #

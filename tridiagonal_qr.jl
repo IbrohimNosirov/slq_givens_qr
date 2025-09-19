@@ -82,7 +82,7 @@ end
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
                      c::Float64, s::Float64,
                      bulge::Float64)
-    @assert b[1]*s + bulge*c < eps(Float64) "bulge didn't move properly."
+    @assert b[1]*s + bulge*c < 1e-14 b[1]*s + bulge*c "bulge didn't move properly."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
@@ -157,8 +157,8 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
         p_small = p+1
         q_small = q
         pop!(bounds_stack)
-        push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
         push!(bounds_stack, (p_large, q_large))
+        push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
     end
 
     for i = p+1:q-2
@@ -189,22 +189,20 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
 
     cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
 
-#    if abs(b[q-1]) < eps(Float64)*(abs(a[q-1]) + abs(a[q]))
-#        #println("trigger deflation.")
-#        b[q-1] = 0.0
-#
-#        p_large = p
-#        q_large = q-1
-#        pop!(bounds_stack)
-#        push!(bounds_stack, (p_large, q_large))
-#    end
+    if abs(b[q-2]) < eps(Float64)*(abs(a[q-2]) + abs(a[q-1]))
+        b[q-2] = 0.0
+
+        p_large = p
+        q_large = q-2
+        pop!(bounds_stack)
+        push!(bounds_stack, (p_large, q_large))
+    end
 end
 
 function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
     n = size(a)[1]
     evec_row = zeros(n)
     evec_row[1] = 1.0
-    max_iter = 1000
 
     # TODO: make stack for each step of deflation [[p,q], [p,q], ...].
     # iterate through each element in the array and run bulge chasing on each
@@ -215,11 +213,7 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
     while norm(b, Inf) > sqrt(eps(Float64))
         @assert !isempty(bounds_stack) display(b)
         p, q = first(bounds_stack)
-#        println("bounds stack ", bounds_stack)
         do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)
-        max_iter -= 1
-        @assert max_iter > 0 display(b)
     end
-    display(b)
     evec_row
 end
