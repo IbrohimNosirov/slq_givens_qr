@@ -1,6 +1,8 @@
 using LinearAlgebra
 using Test
 using Plots
+using Profile
+using StatProfilerHTML
 
 include("tridiagonal_qr.jl")
 include("matrix_gallery.jl")
@@ -22,89 +24,70 @@ end
     @test wilkinson_shift(a1, a2, b) ≈ -1.5413812651491101
 end
 
-@testset "make_bulge!() test " begin
-    a = ones(10)
-    a[10] = 0.0
-    b = ones(9) * 0.4
-    c, s = givens_rotation(a[1], b[1])
-    bulge = 0.0
-    println("type of view ", view(b,1:2))
-    bulge = make_bulge!(view(a,1:2), view(b,1:2), c, s)
-    @test bulge ≈ 0.1485562705416415
+let
+    n = 10000
+    a = 2 * ones(n)
+    b = -1 * ones(n-1)
+    evals_stemr, evecs_stemr = eigen!(SymTridiagonal(a, b))
+    a = 2 * ones(n)
+    b = -1 * ones(n-1)
+    evec_row = @profilehtml qr_tridiag!(a, b)
+    sort!(a)
+    println("evec difference ",
+        norm(sort!(abs.(evec_row)) - sort!(abs.(evecs_stemr[1,:])), Inf))
+    y = (a .- evals_stemr)./norm(evals_stemr, Inf)
+    x = range(1, n, n)
+    plot!(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
 
-#@testset "move_bulge!() test " begin
-#    a = ones(10)
-#    a[10] = 0
-#    b = ones(9)
-#    c, s = givens_rotation(a[1], b[1])
-#    bulge = 3.0
-#    bulge = move_bulge!(a, b, c, s, bulge)
-#    bulge ≈ 0.7071067811865475
-#end
-
 let
-    n = 100
-    a_cold_start = 2 * ones(n)
-    b_cold_start = -1 * ones(n-1)
-    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a_cold_start,
-                                    b_cold_start))
-    a_cold_start = 2 * ones(n)
-    b_cold_start = -1 * ones(n-1)
-    evec_row = @time qr_tridiag!(a_cold_start, b_cold_start)
-    sort!(a_cold_start)
-    println("evec difference ", norm(sort!(abs.(evec_row)) - sort!(abs.(evec_row)), Inf))
-#    println("evec_row mine", evec_row)
-#    println("evec_row stemr", evecs_stemr[1,:])
-#    println("stemr evals ", evals_stemr)
-#    println("evals ", a_cold_start)
-    y = (a_cold_start .- evals_stemr)./norm(evals_stemr, Inf)
-    x = range(1, n, n)
+    a = collect(range(1, 100, 100)) .+ 100.0
+    b = ones(99)
+    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a, b))
+    a = collect(range(1, 100, 100)) .+ 100.0
+    b = ones(99)
+    evec_row = @time qr_tridiag!(a, b)
+    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
+    println("stemr evals ", evals_stemr)
+    println("evals ", a)
+    y = (sort!(a) .- sort!(evals_stemr))./norm(evals_stemr, Inf)
+    x = range(0, 100, 100)
     plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
 end
 
-#let
-#    a = collect(range(1, 100, 100)) .+ 100.0
-#    b = ones(99)
-#    evals_stemr, evecs_stemr = @time eigen!(SymTridiagonal(a, b))
-#    a = collect(range(1, 100, 100)) .+ 100.0
-#    b = ones(99)
-#    evec_row = @time qr_tridiag!(a, b)
-#    println("evec_row error ", (evecs_stemr[1,:] - evec_row))
-#    println("stemr evals ", evals_stemr)
-#    println("evals ", a)
-#    y = (sort!(a) .- sort!(evals_stemr))./norm(evals_stemr, Inf)
-#    x = range(0, 100, 100)
-#    plot(x, abs.(y), yaxis=:log, seriestype=:scatter)
-#end
+let
+    x = Integer.(round.(collect(10 .^ range(1, 2, length=10))))
+    y1 = zeros(10)
+    y2 = zeros(10)
+    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
+    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
 
-#let
-#    x = Integer.(round.(collect(10 .^ range(1, 2, length=10))))
-#    y1 = zeros(10)
-#    y2 = zeros(10)
-#    time_eigen(a,b) = @timed eigen!(SymTridiagonal(a, b))
-#    time_qr_tridiag(a,b) = @timed qr_tridiag!(a, b)
-#
-#    for i = 1:10
-#        n = x[i]
-#        a = 2 * ones(n)
-#        b = -1 * ones(n-1)
-#        y1[i] = time_eigen(a,b)[2]
-#        a = 2 * ones(n)
-#        b = -1 * ones(n-1)
-#        y2[i] = time_qr_tridiag(a,b)[2]
-#    end
-#
-#    println("y1 ", y1)
-#    println("y2 ", y2)
-#    plot(x,  y1, xaxis=:log, yaxis=:log)
-#    plot!(x, y2, xaxis=:log, yaxis=:log)
-#end
+    for i = 1:10
+        n = x[i]
+        a = 2 * ones(n)
+        b = -1 * ones(n-1)
+        y1[i] = time_eigen(a,b)[2]
+        a = 2 * ones(n)
+        b = -1 * ones(n-1)
+        y2[i] = time_qr_tridiag(a,b)[2]
+    end
 
-#let
-#    n = 100
-#    lo = 1.0
-#    hi = 1000.0
-#    eps = 10.0
-#    even_matrix(n)
-#end
+    println("y1 ", y1)
+    println("y2 ", y2)
+    plot(x,  y1, xaxis=:log, yaxis=:log)
+    plot!(x, y2, xaxis=:log, yaxis=:log)
+end
+
+let
+    n = 10
+    evals = collect(range(1, 100, n))
+    tridiag_mtrx_make(evals)
+end
+
+@testset "qr_tridiag! tests" begin
+n = 100
+sep_evals_num = 2
+sep_evals = sep_evals_make(sep_evals_num)
+clustered_evals = clustered_evals_make(n - sep_evals_num)
+evals = [clustered_evals; sep_evals]
+end

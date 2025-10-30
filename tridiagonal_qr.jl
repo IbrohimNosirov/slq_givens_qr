@@ -1,6 +1,10 @@
 using LinearAlgebra
 using DataStructures
 
+# TODO:
+# 3. finish test set.
+# I still think there is a bug in the code.
+
 function givens_rotation(x :: Float64, z :: Float64)
     if z == 0.0
         c = sign(x)
@@ -76,13 +80,15 @@ function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     a[2]   = a2_tmp
     b[1]   = b1_tmp
 
-    @assert abs(bulge) < eps(Float64) "bulge must be zero after cancellation."
+    @assert abs(bulge) < sqrt(eps(Float64)) "bulge is ", abs(bulge),
+    ". must be zero after cancellation."
 end
 
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
                      c::Float64, s::Float64,
                      bulge::Float64)
-    @assert b[1]*s + bulge*c < 1e-14 b[1]*s + bulge*c "bulge didn't move properly."
+    @assert b[1]*s + bulge*c < sqrt(eps(Float64)) "bulge is ", b[1]*s + bulge*c,
+    ". It didn't move properly."
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
     a2_tmp = s*(a[1]*s + b[2]*c) + c*(b[2]*s + a[2]*c)
@@ -99,9 +105,9 @@ end
 function apply_givens_to_evec_row!(evec_row :: AbstractVector,
                                    c :: Float64, s :: Float64,
                                    i :: Int64)
-    tau1          = evec_row[i]
-    tau2          = evec_row[i+1]
-    evec_row[i]   = c*tau1 + s*tau2
+    tau1          =  evec_row[i]
+    tau2          =  evec_row[i+1]
+    evec_row[i]   =  c*tau1 + s*tau2
     evec_row[i+1] = -s*tau1 + c*tau2
 end
 
@@ -127,7 +133,6 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
     end
 
     if q - p == 1
-        #println("reached base case!")
         evals, evecs = eigen!(SymTridiagonal(view(a,p:p+1), view(b,p:p)))
         a[p:p+1] = evals
         b[p] = 0.0
@@ -167,7 +172,7 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
 
         bulge = move_bulge!(view(a, i:i+1), view(b, i-1:i+1), c, s, bulge)
 
-        if abs(b[i-1]) < eps(Float64)*(abs(a[i-1]) + abs(a[i]))
+        if abs(b[i-1]) < 2*eps(Float64)*(abs(a[i-1]) + abs(a[i]))
             #println("trigger deflation.")
             b[i-1] = 0.0
 
