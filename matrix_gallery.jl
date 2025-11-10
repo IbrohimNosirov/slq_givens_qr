@@ -85,7 +85,7 @@ end
 
 function exponential_decay_make(n :: Int64)
     @assert n > 3 "there should be many evals to really get exponential decay."
-    evals = exp.(-collect(range(1,n))) .+ 2*sqrt(eps(Float64))
+    evals = exp.(-collect(range(1,n))) + 2*sqrt(eps(Float64))*randn(n)
     sort!(evals)
     evals
 end

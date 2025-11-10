@@ -72,7 +72,7 @@ function getWstore(ctx :: LanczosContext)
 end
 
 function LanczosContext(A :: Matrix{Float64}, q :: Vector{Float64},
-                        k :: Int64, orth :: Char)
+                        k :: Int64, ν :: DiscreteNonParametric, orth :: Char)
     @assert norm(q) ≈ 1.0 "pass a unit vector. "
     n = size(A, 1)
     Qstore = nothing
@@ -96,13 +96,6 @@ function LanczosContext(A :: Matrix{Float64}, q :: Vector{Float64},
     b = zeros(k)
     w_dists = zeros(k)
 
-    # TODO: ν should be passed in as a view()
-    # set true distribution.    
-    A_tmp = copy(A)
-    tridiag_reduce!(A_tmp)
-    evals, β = tridiag_params(A_tmp)
-    evec_row = qr_tridiag!(evals, β)
-    ν = discretemeasure(evals)
     LanczosContext(A, Qstore, Wstore, Rstore, a, b, q, w_dists, ν, k, n, orth)
 end
 
@@ -124,14 +117,13 @@ function lanczos_f(ctx :: LanczosContext)
     q = get_q(ctx)
     a = get_a(ctx)
     b = get_b(ctx)
-    k = ctx.k
 
     z = A * q
     a[1] = q' * z
     z = z - a[1]*q
     b[1] = norm(z)
 
-    for j = 2:k
+    for j = 2:ctx.k
         q_prev = q
         q = z / b[j-1]
         Q = getQstore(ctx, j)
@@ -154,7 +146,7 @@ function lanczos_f(ctx :: LanczosContext)
         μ = compute_μ(ctx, j)
         ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
     end
-    return a, b[1:end-1]
+    ctx.k
 end
 
 # Lanczos with selective orthogonalization.
@@ -163,7 +155,6 @@ function lanczos_s(ctx :: LanczosContext)
     q = get_q(ctx)
     a = get_a(ctx)
     b = get_b(ctx)
-    k = ctx.k
     W = getWstore(ctx)
 
     norm_A = norm(A)
@@ -173,7 +164,7 @@ function lanczos_s(ctx :: LanczosContext)
     z = z - a[1]*q
     b[1] = norm(z)
 
-    for j = 2:k
+    for j = 2:ctx.k
         q_prev = q
         q = z / b[j-1]
         Q = getQstore(ctx, j)
@@ -188,8 +179,6 @@ function lanczos_s(ctx :: LanczosContext)
             break
         end
 
-        #z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
-        #z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
         orthogonalized = false
         for i = 2:j
             w_tilde  = b[i]*W[j,i+1] + (a[i] - a[j])*W[j,i]
@@ -197,8 +186,6 @@ function lanczos_s(ctx :: LanczosContext)
             W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
 
             if W[j+1,i] > sqrt(eps(Float64))
-                # TODO: collect residual here.
-                # TODO: check that ghosts don't appear.
                 if orthogonalized == false
                     U = @view Q[:,1:j-1]
                     U = Matrix(qr(U).Q)
@@ -219,7 +206,7 @@ function lanczos_s(ctx :: LanczosContext)
         ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
     end
 
-    return a, b[1:end-1]
+    ctx.k
 end
 
 # Lanczos until the first reorthogonalization.
@@ -228,7 +215,6 @@ function lanczos_u(ctx :: LanczosContext)
     q = get_q(ctx)
     a = get_a(ctx)
     b = get_b(ctx)
-    k = ctx.k
     W = getWstore(ctx)
 
     norm_A = norm(getA(ctx))
@@ -238,7 +224,7 @@ function lanczos_u(ctx :: LanczosContext)
     z = z - a[1]*q
     b[1] = norm(z)
 
-    for j = 2:k
+    for j = 2:ctx.k
         q_prev = q
         q = z / b[j-1]
 
@@ -263,80 +249,49 @@ function lanczos_u(ctx :: LanczosContext)
             W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
             if W[j+1,i] > sqrt(eps(Float64))
                 println("converged at iteration ", j)
-                return a[1:j], b[1:j-1], j
+                return j
             end
         end
     end
 
-    return a, b[1:end-1]
+    ctx.k
 end
 
-let
-    n = 50
-    k = 50
-    evals_true = collect(range(1, n))
-    #evals = collect(exp.(-range(1, n)))
-    A = mtrx_make(evals_true)
-#    display(A)
-
-    q = kronecker_quasirand_vec(n)
-    ctx = LanczosContext(A, q/norm(q), k, 'f')
-    evals_lanczos, β = lanczos(ctx)
-    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-#    println(evals_lanczos)
-    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-#    display(maximum(relative_diff))
-#    display(getRstore(ctx))
-
-    ctx_selective = LanczosContext(A, q/norm(q), k, 's')
-    evals_lanczos, β = lanczos(ctx_selective)
-    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-#    println(evals_lanczos)
-#    display(getRstore(ctx_selective))
-    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-#    display(maximum(relative_diff))
-
-    ctx_until_first = LanczosContext(A, q/norm(q), k, 'u')
-    evals_lanczos, β, j = lanczos(ctx_until_first)
-    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-    display(get_w_dists(ctx_until_first, j))
-#    display(getRstore(ctx_until_first))
+#let
+#    n = 50
+#    k = 50
+#    evals_true = collect(range(1, n))
+#    #evals = collect(exp.(-range(1, n)))
+#    A = mtrx_make(evals_true)
+#    A_tmp = copy(A)
+#    tridiag_reduce!(A_tmp)
+#    evals, β = tridiag_params(A_tmp)
+#    evec_row = qr_tridiag!(evals, β)
+#    ν = discretemeasure(evals)
+#    q = kronecker_quasirand_vec(n)
+##    display(A)
+#
+#    ctx = LanczosContext(A, q/norm(q), k, ν,'f')
+#    evals_lanczos, β = lanczos(ctx)
+#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
+##    println(evals_lanczos)
 #    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-#    display(maximum(relative_diff))
-end
-
- #set up the lanczos recurrence
-    #A = diagm(collect(exp.(-range(1,n))))
-       # gives Relative error 1.0428076379228718e-15 at n=4000 range(1, n).
-#    x, y = lanczos(A, q, k)
-#       #println(" x ", x)
-#       #println(" y ", y)
-#    # q = randn(n)
-#    q = kronecker_quasirand_vec(n)
-#    w_full, v_full = lanczos_full(A, q, k)
-#    println("full done.")
+##    display(maximum(relative_diff))
+##    display(getRstore(ctx))
 #
-#    A = mtrx_make(evals)
-#    #TODO: starting vector really changes the error. Why?
-#    #q = randn(n)
-#    q = kronecker_quasirand_vec(n)
-#    w_selective, v_selective = lanczos_selective(A, q, k)
+#    ctx_selective = LanczosContext(A, q/norm(q), k, ν, 's')
+#    evals_lanczos, β = lanczos(ctx_selective)
+#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
+##    println(evals_lanczos)
+##    display(getRstore(ctx_selective))
+#    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
+##    display(maximum(relative_diff))
 #
-#    evec_row = qr_tridiag!(w_selective, v_selective)
-#    #evec_row = eig(SymTridiagonal(w_selective, v_selective))
-#
-#    println("Relative error ", norm((sort!(w_selective) - eigvals(A))./norm(A),
-#    Inf))
-#    #T = SymTridiagonal(deepcopy(w_selective), deepcopy(v_selective))
-#    #println("Relative error ", norm((eigvals(T) - eigvals(A))./norm(A), Inf))
-#
-#    T = SymTridiagonal(w_full, v_full)
-#    println("Relative error ", norm((sort!(eigvals(T)) - eigvals(A))./norm(A),
-#Inf))
-#
-#    # TODO: check that evals are sorted.
-#
-#    # n = 100
-#    # Relative error 7.573537896504857e-16
-#    # Relative error 7.817845570585659e-16
-#    end
+#    ctx_until_first = LanczosContext(A, q/norm(q), k, ν,'u')
+#    evals_lanczos, β, j = lanczos(ctx_until_first)
+#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
+#    display(get_w_dists(ctx_until_first, j))
+##    display(getRstore(ctx_until_first))
+##    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
+##    display(maximum(relative_diff))
+#end
