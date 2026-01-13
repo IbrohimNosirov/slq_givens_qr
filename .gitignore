@@ -3,4 +3,4 @@ __pycache__/
 *.swp
 statprof
 lanczos_paige.jl
-simple_qr.jl
+.DS_Store

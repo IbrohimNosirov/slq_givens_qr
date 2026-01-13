@@ -87,6 +87,7 @@ function apply_givens_to_evec_row!(evec_row :: AbstractVector,
     evec_row[i+1] = -s*tau1 + c*tau2
 end
 
+# 2x2 matrix case
 function apply_evec_to_evec_row!(evec_row :: AbstractVector,
                                  v1 :: Float64, v2 :: Float64,
                                  v3 :: Float64, v4 :: Float64,
@@ -201,7 +202,8 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
     bounds_stack = Stack{Tuple{Int64, Int64}}()
     push!(bounds_stack, (1,n))
 
-    while norm(b, Inf) > sqrt(eps(Float64))
+#    while norm(b, Inf) > sqrt(eps(Float64))
+    while !isempty(bounds_stack)
         @assert !isempty(bounds_stack) display(b)
         p, q = first(bounds_stack)
         do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)
@@ -223,7 +225,8 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, idx :: Int64)
     bounds_stack = Stack{Tuple{Int64, Int64}}()
     push!(bounds_stack, (1,n))
 
-    while norm(b, Inf) > sqrt(eps(Float64))
+    #while norm(b, Inf) > sqrt(eps(Float64))
+    while !isempty(bounds_stack)
         @assert !isempty(bounds_stack) display(b)
         p, q = first(bounds_stack)
         do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)

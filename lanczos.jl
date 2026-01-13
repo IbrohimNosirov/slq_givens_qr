@@ -2,14 +2,11 @@
 # Date: 2025-06-26
 # from https://www.netlib.org/utk/people/JackDongarra/etemplates/node110.html#wrecursion
 using LinearAlgebra
-using Profile
-using Plots
-using StatProfilerHTML
-using OptimalTransport
-using Distributions
 
 include("matrix_gallery.jl")
 include("tridiagonal_qr.jl")
+
+# Needs a lot more assertions.
 
 struct LanczosContext
     A       :: Matrix{Float64}
@@ -26,6 +23,21 @@ struct LanczosContext
     orth    :: Char
 end
 
+getA(ctx :: LanczosContext) = view(ctx.A, :, 1:ctx.n)
+getQstore(ctx :: LanczosContext) = view(ctx.Qstore, :, 1:ctx.k)
+getQstore(ctx :: LanczosContext, j) = view(ctx.Qstore, :, 1:j)
+getRstore(ctx :: LanczosContext) = view(ctx.Rstore, 1:ctx.k, 1:ctx.k)
+getRstore(ctx :: LanczosContext, j) = view(ctx.Rstore, 1:j, j) # jth column.
+
+get_a(ctx :: LanczosContext) = view(ctx.a, 1:ctx.k)
+get_b(ctx :: LanczosContext) = view(ctx.b, 1:ctx.k)
+get_a(ctx :: LanczosContext, j) = view(ctx.a, 1:j)
+get_b(ctx :: LanczosContext, j) = view(ctx.b, 1:j)
+get_q(ctx :: LanczosContext) = view(ctx.q, 1:ctx.n)
+
+get_w_dists(ctx :: LanczosContext) = view(ctx.w_dists, 1:ctx.k)
+get_w_dists(ctx :: LanczosContext, j) = view(ctx.w_dists, 1:j)
+
 function get_residuals(ctx :: LanczosContext, j :: Int64)
     # b[j] |s[j]|
     a = get_a(ctx, j)
@@ -38,19 +50,6 @@ function get_residuals(ctx :: LanczosContext, j :: Int64)
         println("converged to an eval at iteration ", j)
     end
 end
-
-getA(ctx :: LanczosContext) = view(ctx.A, :, 1:ctx.n)
-getQstore(ctx :: LanczosContext) = view(ctx.Qstore, :, 1:ctx.k)
-getQstore(ctx :: LanczosContext, j) = view(ctx.Qstore, :, 1:j)
-getRstore(ctx :: LanczosContext) = view(ctx.Rstore, 1:ctx.k, 1:ctx.k)
-getRstore(ctx :: LanczosContext, j) = view(ctx.Rstore, 1:j, j) # jth column.
-get_a(ctx :: LanczosContext) = view(ctx.a, 1:ctx.k)
-get_b(ctx :: LanczosContext) = view(ctx.b, 1:ctx.k)
-get_a(ctx :: LanczosContext, j) = view(ctx.a, 1:j)
-get_b(ctx :: LanczosContext, j) = view(ctx.b, 1:j)
-get_q(ctx :: LanczosContext) = view(ctx.q, 1:ctx.n)
-get_w_dists(ctx :: LanczosContext) = view(ctx.w_dists, 1:ctx.k)
-get_w_dists(ctx :: LanczosContext, j) = view(ctx.w_dists, 1:j)
 
 function compute_μ(ctx :: LanczosContext, j)
     a = get_a(ctx, j)
@@ -140,7 +139,7 @@ function lanczos_f(ctx :: LanczosContext)
 
         z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
         z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
-        #residuals
+        # residuals
         get_residuals(ctx, j)        
         # Wasserstein distance.
         μ = compute_μ(ctx, j)
@@ -256,6 +255,7 @@ function lanczos_u(ctx :: LanczosContext)
 
     ctx.k
 end
+
 
 #let
 #    n = 50

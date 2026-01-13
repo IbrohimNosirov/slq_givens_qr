@@ -1,5 +1,4 @@
 using LinearAlgebra
-using Plots
 
 function kronecker_quasirand_vec(N, start=0)
     d = 1
@@ -68,7 +67,7 @@ function tridiag_mtrx_make(evals :: AbstractVector)
     a = diag(A)
     b = diag(A, -1)
 
-    @assert evals ≈ eigen!(SymTridiagonal(a, b)).values
+    @assert evals ≈ eigen(SymTridiagonal(a, b)).values
     a, b
 end
 
@@ -79,6 +78,7 @@ end
 
 function sep_evals_make(n :: Int64)
     @assert n < 10 "to be well-separated, there shouldn't be too many of them."
+    @assert n > 0 "must have at least one separate evalue."
     evals = collect(range(1,n)) ./ n
     evals
 end
@@ -90,10 +90,29 @@ function exponential_decay_make(n :: Int64)
     evals
 end
 
-function spectrum_make(n :: Int64, sep_evals_num :: Int64)
-    sep_evals = sep_evals_make(sep_evals_num)
+function linear_decay_make(n :: Int64)
+    @assert n > 0 "pass in at least 1 eigenvalue."
+    evals  = collect(range(1,n)) .- (1 + 2*sqrt(eps(Float64)))
+    evals += 2*sqrt(eps(Float64))*randn(n)
+    evals
+end
+
+function spectrum_exponential_make(n :: Int64, sep_evals_num :: Int64)
     clustered_evals = exponential_decay_make(n - sep_evals_num)
-    evals = [clustered_evals; sep_evals]
+    if sep_evals_num > 0
+        sep_evals = sep_evals_make(sep_evals_num)
+        return [clustered_evals; sep_evals]
+    end
+    clustered_evals
+end
+
+function spectrum_linear_make(n :: Int64, sep_evals_num :: Int64)
+    clustered_evals = linear_decay_make(n - sep_evals_num)
+    if sep_evals_num > 0
+        sep_evals = sep_evals_make(sep_evals_num)
+        return [clustered_evals; sep_evals]
+    end
+    clustered_evals
 end
 
 ## Main
