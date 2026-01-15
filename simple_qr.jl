@@ -7,7 +7,7 @@ const MACHEPS = eps(Float64)
 
 # NEED AT MINIMUM 20 asserts, HAVE 5 asserts.
 
-function givens_rotation!(x :: Float64, z :: Float64)
+function givens_rotation(x :: Float64, z :: Float64)
     c, s = LinearAlgebra.givensAlgorithm(x, z)
     s = -conj(s)
     c, s
