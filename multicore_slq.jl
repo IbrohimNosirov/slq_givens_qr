@@ -21,21 +21,24 @@ NUM_THREADS = Threads.nthreads()
 #=
 QR Iteration
 =#
+const MACHEPS = eps(Float64)
 
-function givens_rotation(x :: Float64, z :: Float64)
-    G, r = givens(x, z, 1, 2)
-    g = G*[1.; 0.]
-    g[1], g[2]
+# NEED AT MINIMUM 20 asserts, HAVE 5 asserts.
+
+function givens_rotation!(x :: Float64, z :: Float64)
+    c, s = LinearAlgebra.givensAlgorithm(x, z)
+    s = -conj(s)
+    c, s
 end
 
 function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
     # a1 last index, a2 second to last index, b last index.
-    d = (a2 - a1)/2.
-    if abs(d) < eps(Float64) && abs(b) < eps(Float64)
+    d = (a2 - a1)/2.0
+    if abs(d) < MACHEPS && abs(b) < MACHEPS
         return a1
     end
     denominator = d + sign(d)*sqrt(d*d + b*b)
-    if abs(denominator) < 5.0*eps(Float64)
+    if abs(denominator) < 5.0*MACHEPS
         return a1
     end
     shift = a1 - (b*b)/denominator
@@ -43,9 +46,8 @@ function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
     shift
 end
 
-function make_bulge!(a :: AbstractVector{Float64},
-                     b :: AbstractVector{Float64},
-                     c :: Float64, s :: Float64)
+function make_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
+    c::Float64, s::Float64)
 
     @assert size(a)[1] == 2   "input is not a 2x2 block due to input a."
     @assert size(b)[1] == 2   "input is not a 2x2 block due to input b."
@@ -64,7 +66,7 @@ end
 function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
                        c::Float64, s::Float64,
                        bulge::Float64)
-#    @assert abs(bulge) >= eps(Float64) "bulge cannot be zero before \
+#    @assert abs(bulge) >= MACHEPS "bulge cannot be zero before \
 #    cancellation."
     @assert size(a)[1] == 2     "input is not a 3x3 block due to a."
     @assert size(b)[1] == 2     "input is not a 3x3 block due to b."
@@ -79,13 +81,13 @@ function cancel_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
     a[2]   = a2_tmp
     b[1]   = b1_tmp
 
-#    @assert abs(bulge) < 10.0*eps(Float64) "bulge must be zero after cancellation."
+#    @assert abs(bulge) < 10.0*MACHEPS "bulge must be zero after cancellation."
 end
 
 function move_bulge!(a::AbstractVector{Float64}, b::AbstractVector{Float64},
                      c::Float64, s::Float64,
                      bulge::Float64)
-#    @assert b[1]*s + bulge*c < 1000.0*eps(Float64) (b[1], c, s, bulge,
+#    @assert b[1]*s + bulge*c < 1000.0*MACHEPS (b[1], c, s, bulge,
 #b[1]*s + bulge*c)
 
     a1_tmp = c*(a[1]*c - b[2]*s) - s*(b[2]*c - a[2]*s)
@@ -120,141 +122,119 @@ function apply_evec_to_evec_row!(evec_row :: AbstractVector,
     evec_row[i+1] = v2*tau1 + v4*tau2
 end
 
-function do_bulge_chasing!(a :: AbstractVector, b :: AbstractVector,
-                           p :: Int64, q :: Int64,
-                           evec_row :: AbstractVector,
-                           bounds_stack :: Stack)
-    @assert size(a)[1] - size(b)[1] == 1
+function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
+                           evec_row::AbstractVector,
+                           s_idx::Int64, f_idx::Int64)
+    @assert size(a)[1] - size(b)[1] == 1 "a, b dimension mismatch."
 
-    if q - p == 0
-        pop!(bounds_stack)
-        return
-    end
-
-    if q - p == 1
-        #println("reached base case!")
-        evals, evecs = eigen!(SymTridiagonal(view(a,p:p+1), view(b,p:p)))
-        a[p:p+1] = evals
-        b[p] = 0.0
-        apply_evec_to_evec_row!(evec_row, evecs[1,1], evecs[1,2],
-                                          evecs[2,1], evecs[2,2], p)
-        pop!(bounds_stack)
-        return
-    end
-
-    shift = wilkinson_shift(a[q], a[q-1], b[q-1])
-    x = a[p] - shift
-    z = b[p]
+    # s_idx and f_idx represent bounds on the big submatrix.
+    # We chase the bulge through this big submatrix without any checks.
+    # a1 last index, a2 second to last index, b last index.
+    shift = wilkinson_shift(a[f_idx], a[f_idx-1], b[f_idx-1])
+    x = a[s_idx] - shift
+    z = b[s_idx]
     c, s = givens_rotation(x, z)
-    apply_givens_to_evec_row!(evec_row, c, s, p)
+    apply_givens_to_evec_row!(evec_row, c, s, s_idx)
 
-    bulge = make_bulge!(view(a, p:p+1), view(b, p:p+1), c, s)
+    bulge = make_bulge!(view(a, s_idx:s_idx+1), view(b, s_idx:s_idx+1), c, s)
 
-    if abs(b[p]) < eps(Float64)*(abs(a[p]) + abs(a[p+1]))
-        #println("trigger deflation.")
-        b[p] = 0.0
-
-        p_large = p
-        q_large = p
-        p_small = p+1
-        q_small = q
-        pop!(bounds_stack)
-        push!(bounds_stack, (p_large, q_large))
-        push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
-    end
-
-    x = b[p]
+    x = b[s_idx]
     z = bulge
 
+    p = s_idx
+    q = f_idx
+
     for i = p+1:q-2
-        c, s = givens_rotation(x, z)
+        c, s = givens_rotation!(x, z)
         apply_givens_to_evec_row!(evec_row, c, s, i)
 
         bulge = move_bulge!(view(a, i:i+1), view(b, i-1:i+1), c, s, bulge)
 
-        if abs(b[i-1]) < eps(Float64)*(abs(a[i-1]) + abs(a[i]))
-            #println("trigger deflation.")
-            b[i-1] = 0.0
-
-            p_large = p
-            q_large = i-1
-            p_small = i
-            q_small = q
-            pop!(bounds_stack)
-            push!(bounds_stack, (p_small, q_small)) # stacks are LIFO
-            push!(bounds_stack, (p_large, q_large))
+        if abs(b[i-1]) < MACHEPS*(abs(a[i-1]) + abs(a[i])) 
+            b[i-1] = 0.0;
+#            println("deflation!")
         end
 
         x = b[i]
         z = bulge
     end
 
-    c, s = givens_rotation(x, z)
+    c, s = givens_rotation!(x, z)
     apply_givens_to_evec_row!(evec_row, c, s, q-1)
 
     cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
 
-    if abs(b[q-2]) < 2*eps(Float64)*(abs(a[q-2]) + abs(a[q-1]))
+    if abs(b[q-2]) < 2*MACHEPS*(abs(a[q-2]) + abs(a[q-1])) 
         b[q-2] = 0.0
-
-        p_large = p
-        q_large = q-2
-        pop!(bounds_stack)
-        push!(bounds_stack, (p_large, q_large))
+#        println("deflation!")
     end
 
-    if abs(b[q-1]) < 2*eps(Float64)*(abs(a[q-1]) + abs(a[q]))
+    if abs(b[q-1]) < 2*MACHEPS*(abs(a[q-1]) + abs(a[q]))
         b[q-1] = 0.0
-
-        p_large = p
-        q_large = q-1
-        pop!(bounds_stack)
-        push!(bounds_stack, (p_large, q_large))
+#        println("deflation!")
     end
 end
 
-function qr_tridiag!(a :: AbstractVector, b :: AbstractVector)
-    n = size(a, 1)
-    evec_row = zeros(n)
-    evec_row[1] = 1.0
+function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
+    N = size(a, 1)
+    MAX_ITER = 3*N
+    evec_row = zeros(N)
+    evec_row[IDX] = 1.0
+    converged = false
+    s_idx = 1
+    f_idx = N
 
-    # make stack for each step of deflation [[p,q], [p,q], ...].
-    # iterate through each element in the array and run bulge chasing on each
-    # bound. if deflation occurs, add the resulting [p,q] to the stack.
-    bounds_stack = Stack{Tuple{Int64, Int64}}()
-    push!(bounds_stack, (1,n))
+    # TODO: an iteration is 1 to N.
+    for i = 1:MAX_ITER
+        @assert i != MAX_ITER "hit max iteration."
+        # indices of a, not b.
 
-#    while norm(b, Inf) > sqrt(eps(Float64))
-    while !isempty(bounds_stack)
-        @assert !isempty(bounds_stack) display(b)
-        p, q = first(bounds_stack)
-        do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)
+        # sweep off-diagonal looking for non-zeros.
+        for j = 1:N-1
+            if b[j] != 0.0
+                s_idx = j # s_idx -> j in a[j]; a[j] sits right above b[j].
+                break
+            end
+
+            if j == N-1
+                converged = true
+            end
+        end
+
+        if converged
+            break
+        end
+
+        for k = s_idx:N-1
+            if b[k] == 0.0
+                f_idx = k
+                break
+            end
+        end
+
+        @assert f_idx - s_idx > 0 "not a matrix."
+
+        if f_idx - s_idx == 1
+            # 2-by-2 matrix
+#            println("triggers")
+            evals, evecs = eigen!(SymTridiagonal(view(a, s_idx:f_idx+1),
+                                                 view(b, s_idx:f_idx)))
+            a[s_idx:f_idx+1] = evals
+            b[s_idx] = 0.0
+            apply_evec_to_evec_row!(evec_row, evecs[1,1], evecs[1,2],
+                                              evecs[2,1], evecs[2,2],s_idx)
+        end
+
+#        println("s_idx: ", s_idx)
+#        println("f_idx: ", f_idx)
+        if f_idx-s_idx > 1
+            do_bulge_chasing!(a, b, evec_row, s_idx, f_idx)
+        end
     end
 
     p = sortperm(a)
     sort!(a)
     evec_row[p]
-end
-
-function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, idx :: Int64)
-    n = size(a, 1)
-    evec_row = zeros(n)
-    evec_row[idx] = 1.0
-
-    # make stack for each step of deflation [[p,q], [p,q], ...].
-    # iterate through each element in the array and run bulge chasing on each
-    # bound. if deflation occurs, add the resulting [p,q] to the stack.
-    bounds_stack = Stack{Tuple{Int64, Int64}}()
-    push!(bounds_stack, (1,n))
-
-    #while norm(b, Inf) > sqrt(eps(Float64))
-    while !isempty(bounds_stack)
-        @assert !isempty(bounds_stack) display(b)
-        p, q = first(bounds_stack)
-        do_bulge_chasing!(a, b, p, q, evec_row, bounds_stack)
-    end
-
-    evec_row
 end
 
 #=
@@ -307,7 +287,7 @@ function compute_μ(ctx :: LanczosContext, j)
     a = get_a(ctx, j)
     evals = copy(a)
     b = get_b(ctx, j-1)
-    evec_row = qr_tridiag!(evals, copy(b)) # first row of evals.
+    evec_row = qr_tridiag!(evals, copy(b), 1) # first row of evals.
     evec_row = evec_row.^2
     evec_row = evec_row / norm(evec_row, 1)
 
@@ -517,7 +497,7 @@ function slq(A :: AbstractMatrix, nv :: Int64, m :: Int64)
     A_tmp = copy(A)
     tridiag_reduce!(A_tmp)
     evals, β = tridiag_params(A_tmp)
-    evec_row = qr_tridiag!(evals, β)
+    evec_row = qr_tridiag!(evals, β, 1)
     ν = discretemeasure(evals)
     v = sign.(randn((n)))
     ctx = LanczosContext(A, v/norm(v), m, ν, 'u')
@@ -534,7 +514,7 @@ function slq(A :: AbstractMatrix, nv :: Int64, m :: Int64)
         steps_taken = lanczos(ctx)
         evals = get_a(ctx, steps_taken)
         b = get_b(ctx, steps_taken-1)
-        evec_row = qr_tridiag!(evals, b)
+        evec_row = qr_tridiag!(evals, b, 1)
         Γ[idx] = (evec_row.*evec_row)' * evals
         avg_evecs[1:steps_taken] .+= evec_row
 #        end

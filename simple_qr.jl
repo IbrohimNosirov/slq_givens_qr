@@ -7,10 +7,10 @@ const MACHEPS = eps(Float64)
 
 # NEED AT MINIMUM 20 asserts, HAVE 5 asserts.
 
-function givens_rotation(x :: Float64, z :: Float64)
-    G, r = givens(x, z, 1, 2)
-    g = G*[1.; 0.]
-    g[1], g[2]
+function givens_rotation!(x :: Float64, z :: Float64)
+    c, s = LinearAlgebra.givensAlgorithm(x, z)
+    s = -conj(s)
+    c, s
 end
 
 function wilkinson_shift(a1:: Float64, a2 :: Float64, b :: Float64)
@@ -111,7 +111,8 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
 
     # s_idx and f_idx represent bounds on the big submatrix.
     # We chase the bulge through this big submatrix without any checks.
-    shift = wilkinson_shift(a[s_idx], a[f_idx-1], b[f_idx-1])
+    # a1 last index, a2 second to last index, b last index.
+    shift = wilkinson_shift(a[f_idx], a[f_idx-1], b[f_idx-1])
     x = a[s_idx] - shift
     z = b[s_idx]
     c, s = givens_rotation(x, z)
@@ -126,58 +127,75 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
     q = f_idx
 
     for i = p+1:q-2
-        c, s = givens_rotation(x, z)
+        c, s = givens_rotation!(x, z)
         apply_givens_to_evec_row!(evec_row, c, s, i)
 
         bulge = move_bulge!(view(a, i:i+1), view(b, i-1:i+1), c, s, bulge)
 
-        abs(b[i-1]) < MACHEPS*(abs(a[i-1]) + abs(a[i])) && (b[i-1] = 0.0;
-println("deflation!"))
+        if abs(b[i-1]) < MACHEPS*(abs(a[i-1]) + abs(a[i])) 
+            b[i-1] = 0.0;
+        end
 
         x = b[i]
         z = bulge
     end
 
-    c, s = givens_rotation(x, z)
+    c, s = givens_rotation!(x, z)
     apply_givens_to_evec_row!(evec_row, c, s, q-1)
 
     cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
 
-    abs(b[q-2]) < 2*MACHEPS*(abs(a[q-2]) + abs(a[q-1])) && (b[q-2] = 0.0;
-println("deflation!"))
-    abs(b[q-1]) < 2*MACHEPS*(abs(a[q-1]) + abs(a[q]))   && (b[q-1] = 0.0;
-println("deflation!"))
+    if abs(b[q-2]) < 2*MACHEPS*(abs(a[q-2]) + abs(a[q-1])) 
+        b[q-2] = 0.0
+    end
+
+    if abs(b[q-1]) < 2*MACHEPS*(abs(a[q-1]) + abs(a[q]))
+        b[q-1] = 0.0
+    end
 end
 
 function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
     N = size(a, 1)
-    MAX_ITER = 2*N
+    MAX_ITER = 3*N
     evec_row = zeros(N)
     evec_row[IDX] = 1.0
+    converged = false
+    s_idx = 1
+    f_idx = N
 
+    # TODO: an iteration is 1 to N.
     for i = 1:MAX_ITER
-        s_idx = 1
-        f_idx = N
-        for j = 1:N-2
-#            if b[j] != 0.0
-#                s_idx = j
-#                break
-#            end
-            b[j] != 0.0 && (s_idx = j; break)
-        end
-        for k = s_idx:N-2
-#            if b[k+1] == 0.0
-#                println("triggered")
-#                f_idx = k
-#                break
-#            end
-            b[k+1] == 0.0 && (f_idx = k; break)
+        @assert i != MAX_ITER "hit max iteration."
+        # indices of a, not b.
+
+        # sweep off-diagonal looking for non-zeros.
+        for j = 1:N-1
+            if b[j] != 0.0
+                s_idx = j # s_idx -> j in a[j]; a[j] sits right above b[j].
+                break
+            end
+
+            if j == N-1
+                converged = true
+            end
         end
 
-        # TODO: this never triggers.
-        if f_idx - s_idx == 0
+        if converged
+            break
+        end
+
+        for k = s_idx:N-1
+            if b[k] == 0.0
+                f_idx = k
+                break
+            end
+        end
+
+        @assert f_idx - s_idx > 0 "not a matrix."
+
+        if f_idx - s_idx == 1
             # 2-by-2 matrix
-            println("triggers")
+#            println("triggers")
             evals, evecs = eigen!(SymTridiagonal(view(a, s_idx:f_idx+1),
                                                  view(b, s_idx:f_idx)))
             a[s_idx:f_idx+1] = evals
@@ -186,9 +204,7 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
                                               evecs[2,1], evecs[2,2],s_idx)
         end
 
-        println("s_idx: ", s_idx)
-        println("f_idx: ", f_idx)
-        if f_idx-s_idx > 0 
+        if f_idx-s_idx > 1
             do_bulge_chasing!(a, b, evec_row, s_idx, f_idx)
         end
     end
@@ -199,21 +215,34 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
 end
 
 let
-    n = 100
+    n = 20
     evals = spectrum_linear_make(n, 0)
+    evals_mine, b = tridiag_mtrx_make(evals)
+    qr_tridiag!(evals_mine, b, 1)
+
+    n = 2000
+    evals = spectrum_linear_make(n, 0)
+
+    evals_mine, b = tridiag_mtrx_make(evals)
+    println("started eigensolve")
+    evecs_mine = @time qr_tridiag!(evals_mine, b, 1)
+    p = sortperm(evals_mine)
+    evals_mine = evals_mine[p]
+    evecs_mine = evecs_mine[p]
+
+    evals = spectrum_linear_make(n, 0)
+    evals_mine, b = tridiag_mtrx_make(evals)
+    evecs_mine = @profilehtml qr_tridiag!(evals_mine, b, 1)
+    p = sortperm(evals_mine)
+    evals_mine = evals_mine[p]
+    evecs_mine = evecs_mine[p]
+
     a, b = tridiag_mtrx_make(evals)
-    evals_lapack, evecs_lapack = eigen!(SymTridiagonal(a, b))
+    evals_lapack, evecs_lapack = @time eigen!(SymTridiagonal(a, b))
     evecs_lapack = evecs_lapack[1,:]
     p = sortperm(evals_lapack)
     evals_lapack = evals_lapack[p]
     evecs_lapack = evecs_lapack[p]
-
-    evals_mine, b = tridiag_mtrx_make(evals)
-    evecs_mine = @profilehtml qr_tridiag!(evals_mine, b, 1)
-#    evecs_mine = qr_tridiag!(a, b, 1)
-    p = sortperm(evals_mine)
-    evals_mine = evals_mine[p]
-    evecs_mine = evecs_mine[p]
 
 #    evec_err = norm(abs.(evecs_mine) - abs.(evecs_lapack), Inf)
 #    println("max evec error ", evec_err)
