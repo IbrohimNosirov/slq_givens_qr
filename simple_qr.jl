@@ -1,6 +1,7 @@
 using LinearAlgebra
 using Profile
 using StatProfilerHTML
+using Plots
 include("matrix_gallery.jl")
 
 const MACHEPS = eps(Float64)
@@ -127,7 +128,7 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
     q = f_idx
 
     for i = p+1:q-2
-        c, s = givens_rotation!(x, z)
+        c, s = givens_rotation(x, z)
         apply_givens_to_evec_row!(evec_row, c, s, i)
 
         bulge = move_bulge!(view(a, i:i+1), view(b, i-1:i+1), c, s, bulge)
@@ -140,7 +141,7 @@ function do_bulge_chasing!(a::AbstractVector, b::AbstractVector,
         z = bulge
     end
 
-    c, s = givens_rotation!(x, z)
+    c, s = givens_rotation(x, z)
     apply_givens_to_evec_row!(evec_row, c, s, q-1)
 
     cancel_bulge!(view(a, q-1:q), view(b, q-2:q-1), c, s, bulge)
@@ -196,9 +197,9 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
         if f_idx - s_idx == 1
             # 2-by-2 matrix
 #            println("triggers")
-            evals, evecs = eigen!(SymTridiagonal(view(a, s_idx:f_idx+1),
-                                                 view(b, s_idx:f_idx)))
-            a[s_idx:f_idx+1] = evals
+            evals, evecs = eigen!(SymTridiagonal(view(a, s_idx:f_idx),
+                                                 view(b, s_idx:s_idx)))
+            a[s_idx:f_idx] = evals
             b[s_idx] = 0.0
             apply_evec_to_evec_row!(evec_row, evecs[1,1], evecs[1,2],
                                               evecs[2,1], evecs[2,2],s_idx)
@@ -214,42 +215,75 @@ function qr_tridiag!(a :: AbstractVector, b :: AbstractVector, IDX :: Int64)
     evec_row[p]
 end
 
-let
-    n = 20
-    evals = spectrum_linear_make(n, 0)
-    evals_mine, b = tridiag_mtrx_make(evals)
-    qr_tridiag!(evals_mine, b, 1)
-
-    n = 2000
-    evals = spectrum_linear_make(n, 0)
-
-    evals_mine, b = tridiag_mtrx_make(evals)
-    println("started eigensolve")
-    evecs_mine = @time qr_tridiag!(evals_mine, b, 1)
-    p = sortperm(evals_mine)
-    evals_mine = evals_mine[p]
-    evecs_mine = evecs_mine[p]
-
-    evals = spectrum_linear_make(n, 0)
-    evals_mine, b = tridiag_mtrx_make(evals)
-    evecs_mine = @profilehtml qr_tridiag!(evals_mine, b, 1)
-    p = sortperm(evals_mine)
-    evals_mine = evals_mine[p]
-    evecs_mine = evecs_mine[p]
-
-    a, b = tridiag_mtrx_make(evals)
-    evals_lapack, evecs_lapack = @time eigen!(SymTridiagonal(a, b))
-    evecs_lapack = evecs_lapack[1,:]
-    p = sortperm(evals_lapack)
-    evals_lapack = evals_lapack[p]
-    evecs_lapack = evecs_lapack[p]
-
-#    evec_err = norm(abs.(evecs_mine) - abs.(evecs_lapack), Inf)
-#    println("max evec error ", evec_err)
+# Accuracy Check
+#let
+#    n = 20
+#    evals = spectrum_linear_make(n, 0)
+#    evals_mine, b = tridiag_mtrx_make(evals)
+#    qr_tridiag!(evals_mine, b, 1)
 #
-    evals_lapack_err = maximum(abs.(evals .- evals_lapack)./abs.(evals))
-    println("max lapack eval error ", evals_lapack_err)
+#    n = 2000
+#    evals = spectrum_linear_make(n, 0)
+#
+#    evals_mine, b = tridiag_mtrx_make(evals)
+#    println("started eigensolve")
+#    evecs_mine = @time qr_tridiag!(evals_mine, b, 1)
+#    p = sortperm(evals_mine)
+#    evals_mine = evals_mine[p]
+#    evecs_mine = evecs_mine[p]
+#
+#    evals = spectrum_linear_make(n, 0)
+#    evals_mine, b = tridiag_mtrx_make(evals)
+#    evecs_mine = @profilehtml qr_tridiag!(evals_mine, b, 1)
+#    p = sortperm(evals_mine)
+#    evals_mine = evals_mine[p]
+#    evecs_mine = evecs_mine[p]
+#
+#    a, b = tridiag_mtrx_make(evals)
+#    evals_lapack, evecs_lapack = @time eigen!(SymTridiagonal(a, b))
+#    evecs_lapack = evecs_lapack[1,:]
+#    p = sortperm(evals_lapack)
+#    evals_lapack = evals_lapack[p]
+#    evecs_lapack = evecs_lapack[p]
+#
+##    evec_err = norm(abs.(evecs_mine) - abs.(evecs_lapack), Inf)
+##    println("max evec error ", evec_err)
+##
+#    evals_lapack_err = maximum(abs.(evals .- evals_lapack)./abs.(evals))
+#    println("max lapack eval error ", evals_lapack_err)
+#
+#    evals_mine_err = maximum(abs.(evals .- evals_mine)./abs.(evals))
+#    println("max mine eval errror ", evals_mine_err)
+#end
 
-    evals_mine_err = maximum(abs.(evals .- evals_mine)./abs.(evals))
-    println("max mine eval errror ", evals_mine_err)
-end
+# Speed check
+#let
+#N_array = collect(round.(exp.(range(4, 11))))
+#N_array = convert.(Int64, N_array)
+#
+#times_array  = zeros(8)
+#lapack_array = zeros(8)
+#
+## make matrix
+#for i = 1:size(N_array, 1)
+#    N = N_array[i]
+#    a = ones(N) .* 2
+#    b = ones(N-1) .*-1
+#
+#    times_array[i]  = @elapsed qr_tridiag!(a, b, 1) 
+#
+#    a = ones(N) .* 2
+#    b = ones(N) .*-1
+#
+#    lapack_array[i] = @elapsed eigen!(SymTridiagonal(a, b))
+#end
+#
+#gr()
+#plot(title = "LAPACK vs. Our eigensolver")
+#plot!(N_array,  times_array, label = "ours")
+#plot!(N_array, lapack_array, label = "LAPACK")
+#plot!(yaxis = ("Time (s)", :log10))
+#plot!(xaxis = ("Matrix size (N)", :log10))
+#plot!(legend=:outerbottom)
+#
+#end

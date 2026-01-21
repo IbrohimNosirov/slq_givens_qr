@@ -4,9 +4,11 @@
 using LinearAlgebra
 
 include("matrix_gallery.jl")
-include("tridiagonal_qr.jl")
+include("simple_qr.jl")
 
-# Needs a lot more assertions.
+# TODO: Needs a lot more assertions.
+
+const MACHEPS = eps(Float64)
 
 struct LanczosContext
     A       :: Matrix{Float64}
@@ -38,6 +40,7 @@ get_q(ctx :: LanczosContext) = view(ctx.q, 1:ctx.n)
 get_w_dists(ctx :: LanczosContext) = view(ctx.w_dists, 1:ctx.k)
 get_w_dists(ctx :: LanczosContext, j) = view(ctx.w_dists, 1:j)
 
+# should be called compute_residuals
 function get_residuals(ctx :: LanczosContext, j :: Int64)
     # b[j] |s[j]|
     a = get_a(ctx, j)
@@ -46,16 +49,13 @@ function get_residuals(ctx :: LanczosContext, j :: Int64)
 
     R = getRstore(ctx, j)
     R[:] = abs.(evec_row) .* b[j-1]
-    if norm(R, Inf) < sqrt(eps(Float64))
-        println("converged to an eval at iteration ", j)
-    end
 end
 
 function compute_μ(ctx :: LanczosContext, j)
     a = get_a(ctx, j)
     evals = copy(a)
     b = get_b(ctx, j-1)
-    evec_row = qr_tridiag!(evals, copy(b)) # first row of evals.
+    evec_row = qr_tridiag!(evals, copy(b), 1) # first row of evals.
     evec_row = evec_row.^2
     evec_row = evec_row / norm(evec_row, 1)
 
@@ -105,6 +105,8 @@ function lanczos(ctx :: LanczosContext)
         lanczos_s(ctx)
     elseif ctx.orth == 'u'
         lanczos_u(ctx)
+    elseif ctx.orth == 'o'
+        lanczos_so(ctx)
     else
         error("not a valid orthogonalization scheme.")
     end
@@ -256,6 +258,64 @@ function lanczos_u(ctx :: LanczosContext)
     ctx.k
 end
 
+# Lanczos with selective orthogonalization.
+function lanczos_so(ctx :: LanczosContext)
+    terminate = false
+
+    A = getA(ctx)
+    q = get_q(ctx)
+    a = get_a(ctx)
+    b = get_b(ctx)
+
+    z = A * q
+    a[1] = q' * z
+    z = z - a[1]*q
+    b[1] = norm(z)
+
+    for j = 2:ctx.k
+        q_prev = q
+        q = z / b[j-1]
+
+        z = A*q - b[j-1] * q_prev
+        a[j] = q' * z
+        z = z - a[j]*q
+        b[j] = norm(z)
+
+        if b[j] == 0
+            break
+        end
+
+        # get residuals.
+        evals    = deepcopy(get_a(ctx, j))
+        b_copy   = deepcopy(get_b(ctx, j-1))
+        evec_row = qr_tridiag!(evals, b_copy, j)
+        T_norm = maximum(abs.(evals))
+
+        R = getRstore(ctx, j)
+        R[:] = abs.(evec_row) .* b[j-1]
+
+        # LanSO check.
+        for i = 1:j
+            if R[i] < sqrt(eps(Float64)) * T_norm
+                terminate = true
+                println("Good Ritz val #", i, ", ", R[i])
+            end
+        end
+        # TODO: needs full implementation.
+
+        # Wasserstein distance.
+        μ = compute_μ(ctx, j)
+        ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
+
+        if terminate
+            println("residuals ", getRstore(ctx,j))
+            println("Wasserstein distances ", get_w_dists(ctx,j))
+            println("Done")
+            return j
+        end
+    end
+    ctx.k
+end
 
 #let
 #    n = 50
