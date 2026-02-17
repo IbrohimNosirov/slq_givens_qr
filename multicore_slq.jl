@@ -21,7 +21,7 @@ include("lanczos.jl")
 
 NUM_THREADS = Threads.nthreads()
 
-function slq(A :: AbstractMatrix, nv :: Int64, m :: Int64, orth :: Char)
+function slq(A :: AbstractMatrix, nv :: Int64, m :: Int64, orth :: Symbol)
     # nv - number of vectors (monte carlo samples).
     # m  - size of krylov subspace.
     N = size(A)[1]
@@ -33,11 +33,11 @@ function slq(A :: AbstractMatrix, nv :: Int64, m :: Int64, orth :: Char)
     evec_row = qr_tridiag!(evals, β, 1)
     ν = discretemeasure(evals)
     v = sign.(randn((N)))
-    ctx = LanczosContext(A, v/norm(v), m, ν, orth)
+    ctx = LanczosContext(orth, A, v/norm(v), m, ν)
 
     for idx in 1:nv
         v = sign.(randn((N)))
-        ctx = LanczosContext(A, v/norm(v), m, ν, orth)
+        ctx = LanczosContext(orth, A, v/norm(v), m, ν, orth)
         steps_taken = lanczos(ctx)
         evals = get_a(ctx, steps_taken)
         b = get_b(ctx, steps_taken-1)
@@ -53,59 +53,71 @@ end
 
 let
 println("linear decay, 2 gaps, n = 1000")
-n  = 1000  # number of evals (size of matrix A).
+n  = 100  # number of evals (size of matrix A).
 p  = 2     # number of standalone evals.
 nv = 1   # number of Monte Carlo trials.
-m  = 200   # number of Krylov steps.
-
-evals = spectrum_linear_make(n, p)
+m  = 20   # number of Krylov steps.
+evals = zeros(n)
+evals = make_spectrum_linear(Interval(0,1), n, p)
 A = mtrx_make(evals)
-@time ctx = slq(A, nv, m, 'o')
-
-println("exponential decay, 2 gaps, n = 1000")
-n  = 1000 # number of evals (size of matrix A).
-p  = 2    # number of standalone evals.
-nv = 1   # number of Monte Carlo trials.
-m  = 200   # number of Krylov steps.
-
-evals = spectrum_exponential_make(n, p)
-A = mtrx_make(evals)
-@time ctx = slq(A, nv, m, 'o')
-
-println("linear decay, 3 gaps, n = 1000")
-n  = 1000  # number of evals (size of matrix A).
-p  = 3     # number of standalone evals.
-nv = 1   # number of Monte Carlo trials.
-m  = 200   # number of Krylov steps.
-
-evals = spectrum_linear_make(n, p)
-A = mtrx_make(evals)
-@time ctx = slq(A, nv, m, 'o')
-
-println("exponential decay, 3 gaps, n = 1000")
-n  = 1000 # number of evals (size of matrix A).
-p  = 3    # number of standalone evals.
-nv = 1   # number of Monte Carlo trials.
-m  = 200   # number of Krylov steps.
-
-evals = spectrum_exponential_make(n, p)
-A = mtrx_make(evals)
-@time ctx = slq(A, nv, m, 'o')
-
-println("linear decay, no gaps, n = 1000")
-n  = 1000 # number of evals (size of matrix A).
-p  = 0    # number of standalone evals.
-nv = 1 # number of Monte Carlo trials.
-m  = 200   # number of Krylov steps.
-
-evals = spectrum_linear_make(n, p)
-A = mtrx_make(evals)
-#@time ctx = slq(A, nv, m, 's')
-@time ctx = slq(A, nv, m, 'o')
-#@time ctx = slq(A, nv, m, 'u')
-#@time ctx = slq(A, nv, m, 'f')
-gr()
-scatter(evals)
-
-#println("trace of A ", tr(A))
+@time ctx = slq(A, nv, m, :FULL_ORTH)
 end
+
+#let
+#println("linear decay, 2 gaps, n = 1000")
+#n  = 100  # number of evals (size of matrix A).
+#p  = 2     # number of standalone evals.
+#nv = 1   # number of Monte Carlo trials.
+#m  = 20   # number of Krylov steps.
+#
+#evals = spectrum_linear_make(n, p)
+#A = mtrx_make(evals)
+#@time ctx = slq(A, nv, m, 'o')
+#
+#println("exponential decay, 2 gaps, n = 1000")
+#n  = 100 # number of evals (size of matrix A).
+#p  = 2    # number of standalone evals.
+#nv = 1   # number of Monte Carlo trials.
+#m  = 20   # number of Krylov steps.
+#
+#evals = spectrum_exponential_make(n, p)
+#A = mtrx_make(evals)
+#@time ctx = slq(A, nv, m, 'o')
+#
+#println("linear decay, 3 gaps, n = 1000")
+#n  = 100  # number of evals (size of matrix A).
+#p  = 3     # number of standalone evals.
+#nv = 1   # number of Monte Carlo trials.
+#m  = 20   # number of Krylov steps.
+#
+#evals = spectrum_linear_make(n, p)
+#A = mtrx_make(evals)
+#@time ctx = slq(A, nv, m, 'o')
+#
+#println("exponential decay, 3 gaps, n = 1000")
+#n  = 100 # number of evals (size of matrix A).
+#p  = 3    # number of standalone evals.
+#nv = 1   # number of Monte Carlo trials.
+#m  = 20   # number of Krylov steps.
+#
+#evals = spectrum_exponential_make(n, p)
+#A = mtrx_make(evals)
+#@time ctx = slq(A, nv, m, 'o')
+#
+#println("linear decay, no gaps, n = 1000")
+#n  = 100 # number of evals (size of matrix A).
+#p  = 0    # number of standalone evals.
+#nv = 1 # number of Monte Carlo trials.
+#m  = 20   # number of Krylov steps.
+#
+#evals = spectrum_linear_make(n, p)
+#A = mtrx_make(evals)
+##@time ctx = slq(A, nv, m, 's')
+#@time ctx = slq(A, nv, m, 'o')
+##@time ctx = slq(A, nv, m, 'u')
+#@time ctx = slq(A, nv, m, 'f')
+#gr()
+#scatter(evals)
+#
+##println("trace of A ", tr(A))
+#end

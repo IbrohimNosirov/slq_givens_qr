@@ -1,357 +1,541 @@
-# Author: Ibrohim Nosirov
-# Date: 2025-06-26
-# from https://www.netlib.org/utk/people/JackDongarra/etemplates/node110.html#wrecursion
+# Date: 2026-02-02
 using LinearAlgebra
-
-include("matrix_gallery.jl")
-include("simple_qr.jl")
-
-# TODO: Needs a lot more assertions.
+include("tridiagonal_qr.jl")
 
 const MACHEPS = eps(Float64)
 
+# use active names for functions
+# variable names should have [noun]_[qualifier] e.g. cluster_max better than max_cluster
+
+abstract type OrthStrategy end
+struct FULLORTH <: OrthStrategy end
+struct PRO <: OrthStrategy end
+struct FIRSTORTH <: OrthStrategy end
+struct SO <: OrthStrategy end
+
 struct LanczosContext
-    A       :: Matrix{Float64}
-    Qstore  :: Union{Matrix{Float64}, Nothing}
-    Wstore  :: Union{Matrix{Float64}, Nothing}
-    Rstore  :: Matrix{Float64}                  # Ritz residuals
-    a       :: Vector{Float64}
-    b       :: Vector{Float64}
-    q       :: Vector{Float64}
-    w_dists :: Vector{Float64}
-    ν       :: DiscreteNonParametric            # true distribution
-    k       :: Int64
-    n       :: Int64
-    orth    :: Char
+  A              :: Matrix{Float64}                 # input matrix.
+  Q_store        :: Union{Matrix{Float64}, Nothing} # Lanczos vectors.
+  W_store        :: Union{Matrix{Float64}, Nothing} # orthogonality tracker.
+  R_store        :: Matrix{Float64}                 # Ritz residuals.
+  a_vec          :: Vector{Float64}                 # main diagonal; size k.
+  b_vec          :: Vector{Float64}                 # off diagonal;size k-1.
+  q_vec          :: Vector{Float64}                 # starting vector.
+  w_distance_arr :: Vector{Float64}                 # Wasserstein distances.
+  ν_distribution :: DiscreteNonParametric           # true distribution.
+  k_lanczos      :: Int64                           # number of iterations.
+  N              :: Int64                           # NxN matrix.
 end
 
-getA(ctx :: LanczosContext) = view(ctx.A, :, 1:ctx.n)
-getQstore(ctx :: LanczosContext) = view(ctx.Qstore, :, 1:ctx.k)
-getQstore(ctx :: LanczosContext, j) = view(ctx.Qstore, :, 1:j)
-getRstore(ctx :: LanczosContext) = view(ctx.Rstore, 1:ctx.k, 1:ctx.k)
-getRstore(ctx :: LanczosContext, j) = view(ctx.Rstore, 1:j, j) # jth column.
-
-get_a(ctx :: LanczosContext) = view(ctx.a, 1:ctx.k)
-get_b(ctx :: LanczosContext) = view(ctx.b, 1:ctx.k)
-get_a(ctx :: LanczosContext, j) = view(ctx.a, 1:j)
-get_b(ctx :: LanczosContext, j) = view(ctx.b, 1:j)
-get_q(ctx :: LanczosContext) = view(ctx.q, 1:ctx.n)
-
-get_w_dists(ctx :: LanczosContext) = view(ctx.w_dists, 1:ctx.k)
-get_w_dists(ctx :: LanczosContext, j) = view(ctx.w_dists, 1:j)
-
-# should be called compute_residuals
-function get_residuals(ctx :: LanczosContext, j :: Int64)
-    # b[j] |s[j]|
-    a = get_a(ctx, j)
-    b = get_b(ctx, j-1)
-    evec_row = qr_tridiag!(deepcopy(a), deepcopy(b), j)
-
-    R = getRstore(ctx, j)
-    R[:] = abs.(evec_row) .* b[j-1]
+function LanczosContext(::FULLORTH, A :: AbstractMatrix, q_vec :: AbstractVector, k :: Int64,
+                      ν :: DiscreteNonParametric)
+    @assert norm(q_vec) ≈ 1.0 "pass a unit vector."
+    N = size(A, 1)
+    
+    Q_store    = zeros(N, k)
+    W_store    = nothing
+    R_store    = zeros(k, k)
+    a_vec      = zeros(k)
+    b_vec      = zeros(k-1)
+    w_distance_arr = zeros(k)
+    
+    LanczosContext(A, Q_store, W_store, R_store, a_vec, b_vec, q_vec, w_distance_arr, ν, k, N)
 end
 
-function compute_μ(ctx :: LanczosContext, j)
-    a = get_a(ctx, j)
+function LanczosContext(::PRO, A, q_vec, k, ν)
+    @assert norm(q_vec) ≈ 1.0 "pass a unit vector."
+    N = size(A, 1)
+    
+    Q_store = zeros(N, k)
+    W_store = diagm(0  => ones(k+1),
+                   -1  => eps(Float64)*ones(k),
+                    1  => eps(Float64)*ones(k))
+    R_store = zeros(k, k)
+    a_vec = zeros(k)
+    b_vec = zeros(k-1)
+    w_distance_arr = zeros(k)
+    
+    LanczosContext(A, Q_store, W_store, R_store, a_vec, b_vec, q_vec, w_distance_arr, ν, k, N)
+end
+
+function LanczosContext(::FIRSTORTH, A, q_vec, k, ν)
+    @assert norm(q_vec) ≈ 1.0 "pass a unit vector."
+    N = size(A, 1)
+    
+    Q_store = nothing
+    W_store = diagm(0  => ones(k+1),
+                   -1  => eps(Float64)*ones(k),
+                    1  => eps(Float64)*ones(k))
+    R_store = zeros(k, k)
+    a_vec = zeros(k)
+    b_vec = zeros(k-1)
+    w_distance_arr = zeros(k)
+    
+    LanczosContext(A, Q_store, W_store, R_store, a_vec, b_vec, q_vec, w_distance_arr, ν, k, N)
+end
+
+function LanczosContext(::SO, A, q_vec, k, ν)
+    @assert norm(q_vec) ≈ 1.0 "pass a unit vector."
+    N = size(A, 1)
+    
+    Q_store = zeros(N, k)
+    W_store = nothing
+    R_store = zeros(k, k)
+    a_vec = zeros(k)
+    b_vec = zeros(k-1)
+    w_distance_arr = zeros(k)
+    
+    LanczosContext(A, Q_store, W_store, R_store, a_vec, b_vec, q_vec, w_distance_arr, ν, k, N)
+end
+
+# Dispatch to implementations
+lanczos(ctx :: LanczosContext, :: FULLORTH) = lanczos_full_orth(ctx)
+lanczos(ctx :: LanczosContext, :: PRO) = lanczos_pro(ctx)
+lanczos(ctx :: LanczosContext, :: FIRSTORTH) = lanczos_first_orth(ctx)
+lanczos(ctx :: LanczosContext, :: SO) = lanczos_so(ctx)
+
+# Getters for A and q
+get_A(ctx :: LanczosContext) = ctx.A
+get_q_vec(ctx :: LanczosContext) = ctx.q_vec
+
+# These jth iteration getters act as guards against off-by-one (overcount)
+# errors; we shouldn't be able to load the j'th result into the j+1th entry.
+function get_Q_store(ctx :: LanczosContext, j :: Int64)
+  # what is the difference between != and !== ? 
+  @assert ctx.Q_store !== nothing "can't retrieve unallocated space."
+  view(ctx.Q_store, 1:ctx.N, 1:j)
+end
+
+function get_Q_store_col(ctx :: LanczosContext, j :: Int64)
+  @assert ctx.Q_store !== nothing "can't retrieve unallocated space."
+  view(ctx.Q_store, 1:ctx.N, j)
+end
+
+function get_W_store(ctx :: LanczosContext, j :: Int64)
+  @assert ctx.W_store !== nothing "can't retrieve unallocated space."
+  view(ctx.W_store, :, 1:j)
+end
+
+function get_W_store(ctx :: LanczosContext)
+  @assert ctx.W_store !== nothing "can't retrieve unallocated space."
+  ctx.W_store
+end
+
+# There can only be j residuals after j steps; we store these in the jth column.
+function get_R_store(ctx :: LanczosContext, j :: Int64)
+  @assert ctx.R_store !== nothing "can't retrieve unallocated space."
+  view(ctx.R_store, 1:j, j)
+end
+
+function get_R_store_col(ctx :: LanczosContext, j :: Int64)
+  @assert ctx.R_store !== nothing "can't retrieve unallocated space."
+  view(ctx.R_store, 1:j, j)
+end
+
+get_a_vec(ctx :: LanczosContext, j) = view(ctx.a_vec, 1:j)
+get_a_vec(ctx :: LanczosContext) = ctx.a_vec
+get_b_vec(ctx :: LanczosContext, j) = view(ctx.b_vec, 1:j-1)
+get_b_vec(ctx :: LanczosContext) = ctx.b_vec
+get_w_distance_arr(ctx :: LanczosContext, j) = view(ctx.w_distance_arr, 1:j)
+
+# Computes and stores residuals
+function compute_residuals!(ctx :: LanczosContext, j :: Int64)
+  # b[j] |s[j]|
+  a = get_a_vec(ctx, j)
+  b = get_b_vec(ctx, j)
+  evec_row = qr_tridiag!(copy(a), copy(b), j)
+
+  R = get_R_store(ctx, j)
+  R .= abs.(evec_row) .* ctx.b_vec[j-1]
+end
+
+function compute_μ(ctx :: LanczosContext, j :: Int64)
+  @assert j > 0 "iteration must be greater than 0."
+  evec_row = zeros(j)
+  evals    = zeros(j)
+  if j == 1
+    evec_row[1] = 1
+    evals[1] = ctx.a_vec[1]
+  else
+    a = get_a_vec(ctx, j)
     evals = copy(a)
-    b = get_b(ctx, j-1)
-    evec_row = qr_tridiag!(evals, copy(b), 1) # first row of evals.
-    evec_row = evec_row.^2
-    evec_row = evec_row / norm(evec_row, 1)
+    b = get_b_vec(ctx, j)
+    evec_row = qr_tridiag!(evals, copy(b), 1) # first row of eigenvectors.
+  end
+  evec_row .= evec_row.^2
+  evec_row  = evec_row / norm(evec_row, 1)
 
-    discretemeasure(evals, evec_row)
+  discretemeasure(evals, evec_row)
 end
 
-function getWstore(ctx :: LanczosContext)
-    if !(ctx.orth == 'f')
-        return view(ctx.Wstore, :, 1:ctx.k+1)
-    else
-        return nothing
-    end
-end
-
-function LanczosContext(A :: Matrix{Float64}, q :: Vector{Float64},
-                        k :: Int64, ν :: DiscreteNonParametric, orth :: Char)
-    @assert norm(q) ≈ 1.0 "pass a unit vector. "
-    n = size(A, 1)
-    Qstore = nothing
-    Wstore = nothing
-
-    # s -> selective orthogonalization
-    # f -> full orthogonalization
-    # u -> until the first orthogonalization
-    if !(orth == 'u')
-        Qstore = zeros(n, k)
-    end
-
-    if !(orth == 'f')
-        Wstore = diagm(0  => ones(k+1),
-                       -1 => eps(Float64)*ones(k), 
-                       1  => eps(Float64)*ones(k))
-    end
-
-    Rstore = zeros(k, k)
-    a = zeros(k)
-    b = zeros(k)
-    w_dists = zeros(k)
-
-    LanczosContext(A, Qstore, Wstore, Rstore, a, b, q, w_dists, ν, k, n, orth)
-end
-
-function lanczos(ctx :: LanczosContext)
-    if ctx.orth == 'f'
-        lanczos_f(ctx)
-    elseif ctx.orth == 's' 
-        lanczos_s(ctx)
-    elseif ctx.orth == 'u'
-        lanczos_u(ctx)
-    elseif ctx.orth == 'o'
-        lanczos_so(ctx)
-    else
-        error("not a valid orthogonalization scheme.")
-    end
-end
-
+# Indices are all wrong.
 # Lanczos with full orthogonalization (orthogonalization at every step).
-function lanczos_f(ctx :: LanczosContext)
-    A = getA(ctx)
-    q = get_q(ctx)
-    a = get_a(ctx)
-    b = get_b(ctx)
+function lanczos_full_orth(ctx :: LanczosContext)
+  A = get_A(ctx)
+  q = get_q_vec(ctx)
+  a = get_a_vec(ctx)
+  b = get_b_vec(ctx)
 
-    z = A * q
-    a[1] = q' * z
-    z = z - a[1]*q
-    b[1] = norm(z)
+  @assert ctx.Q_store !== nothing
+  @assert ctx.W_store === nothing
 
-    for j = 2:ctx.k
-        q_prev = q
-        q = z / b[j-1]
-        Q = getQstore(ctx, j)
-        Q[:,j-1] = q
+  z = A * q
+  a[1] = q' * z
+  z = z - a[1]*q
+  b[1] = norm(z)
 
-        z = A*q - b[j-1] * q_prev
-        a[j] = q' * z
-        z = z - a[j]*q
-        b[j] = norm(z)
+  for j = 1:ctx.k_lanczos-1
+      q_prev = q
+      q = z / b[j]
+      Q = get_Q_store(ctx, j)
+      Q[:,j] = q
 
-        if b[j] == 0
-            break
-        end
+      z = A*q - b[j] * q_prev
+      a[j+1] = q' * z
+      z = z - a[j+1]*q
+      b[j+1] = norm(z)
 
-        z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
-        z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
-        # residuals
-        get_residuals(ctx, j)        
-        # Wasserstein distance.
-        μ = compute_μ(ctx, j)
-        ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
-    end
-    ctx.k
+      z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
+      z -= view(Q,:,1:j-1) * (view(Q,:,1:j-1)' * z)
+      
+      # residuals
+      compute_residuals!(ctx, j)
+      
+      # Wasserstein distance.
+      μ = compute_μ(ctx, j)
+      ctx.w_distance_arr[j] = wasserstein(μ, ctx.ν_distribution; p=Val(1))
+
+      if b[j+1] == 0
+        break
+      end
+  end
+  ctx.k_lanczos
 end
 
-# Lanczos with selective orthogonalization.
-function lanczos_s(ctx :: LanczosContext)
-    A = getA(ctx)
-    q = get_q(ctx)
-    a = get_a(ctx)
-    b = get_b(ctx)
-    W = getWstore(ctx)
+# Lanczos with selective orthogonalization (LanPRO).
+function lanczos_pro(ctx :: LanczosContext)
+  A = get_A(ctx)
+  q = get_q_vec(ctx)
+  a = get_a_vec(ctx)
+  b = get_b_vec(ctx)
+  W = get_W_store(ctx)
 
-    norm_A = norm(A)
+  norm_A = norm(A)
 
-    z = A * q
-    a[1] = q' * z
-    z = z - a[1]*q
-    b[1] = norm(z)
+  z = A * q
+  a[1] = q' * z
+  z = z - a[1]*q
+  b[1] = norm(z)
 
-    for j = 2:ctx.k
-        q_prev = q
-        q = z / b[j-1]
-        Q = getQstore(ctx, j)
-        Q[:,j-1] = q
+  for j = 2:ctx.k_lanczos
+      q_prev = q
+      q = z / b[j-1]
+      Q = get_Q_store(ctx, j)
+      Q[:,j-1] = q
 
-        z = A*q - b[j-1] * q_prev
-        a[j] = q' * z
-        z = z - a[j]*q
-        b[j] = norm(z)
+      z = A*q - b[j-1] * q_prev
+      a[j] = q' * z
+      z = z - a[j]*q
+      b[j] = norm(z)
 
-        if b[j] == 0.0
-            break
-        end
+      if b[j] == 0.0
+        break
+      end
 
-        orthogonalized = false
-        for i = 2:j
-            w_tilde  = b[i]*W[j,i+1] + (a[i] - a[j])*W[j,i]
-            w_tilde += b[i-1]*W[j,i-1] - b[j-1]*W[j-1,i]
-            W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
+      orthogonalized = false
+      for i = 2:j
+          w_tilde  = b[i]*W[j,i+1] + (a[i] - a[j])*W[j,i]
+          w_tilde += b[i-1]*W[j,i-1] - b[j-1]*W[j-1,i]
+          W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
 
-            if W[j+1,i] > sqrt(eps(Float64))
-                if orthogonalized == false
-                    U = @view Q[:,1:j-1]
-                    U = Matrix(qr(U).Q)
-                    @assert U' * U ≈ I(j-1)
-                    z -= U * (U' * z)
-                    z -= U * (U' * z)
-                    orthogonalized = true
-                end
-                W[j+1,i] = eps(Float64)
-                W[j,i] = eps(Float64)
-                #break
+          if W[j+1,i] > sqrt(eps(Float64))
+            if orthogonalized == false
+              U = @view Q[:,1:j-1]
+              U = Matrix(qr(U).Q)
+              @assert U' * U ≈ I(j-1)
+              z -= U * (U' * z)
+              z -= U * (U' * z)
+              orthogonalized = true
             end
-        end
-        #residuals
-        get_residuals(ctx, j)        
-        # Wasserstein distance.
-        μ = compute_μ(ctx, j)
-        ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
-    end
+            W[j+1,i] = eps(Float64)
+            W[j,i] = eps(Float64)
+          end
+      end
+      
+      # residuals
+      compute_residuals!(ctx, j)
+      
+      # Wasserstein distance.
+      μ = compute_μ(ctx, j)
+      ctx.w_distance_arr[j] = wasserstein(μ, ctx.ν_distribution; p=Val(1))
+  end
 
-    ctx.k
+  ctx.k_lanczos
 end
 
 # Lanczos until the first reorthogonalization.
-function lanczos_u(ctx :: LanczosContext)
-    A = getA(ctx)
-    q = get_q(ctx)
-    a = get_a(ctx)
-    b = get_b(ctx)
-    W = getWstore(ctx)
+function lanczos_first_orth(ctx :: LanczosContext)
+  A = get_A(ctx)
+  q = get_q_vec(ctx)
+  a = get_a_vec(ctx)
+  b = get_b_vec(ctx)
+  W = get_W_store(ctx)
 
-    norm_A = norm(getA(ctx))
+  norm_A = norm(A)
 
-    z = A * q
-    a[1] = q' * z
-    z = z - a[1]*q
-    b[1] = norm(z)
+  z = A * q
+  a[1] = q' * z
+  z = z - a[1]*q
+  b[1] = norm(z)
 
-    for j = 2:ctx.k
-        q_prev = q
-        q = z / b[j-1]
+  for j = 2:ctx.k_lanczos
+    q_prev = q
+    q = z / b[j-1]
 
-        z = A*q - b[j-1] * q_prev
-        a[j] = q' * z
-        z = z - a[j]*q
-        b[j] = norm(z)
+    z = A*q - b[j-1] * q_prev
+    a[j] = q' * z
+    z = z - a[j]*q
+    b[j] = norm(z)
 
-        if b[j] == 0
-            break
-        end
-
-        #residuals
-        get_residuals(ctx, j)        
-        # Wasserstein distance.
-        μ = compute_μ(ctx, j)
-        ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
-
-        for i = 2:j
-            w_tilde  = b[i]*W[j,i+1] + (a[i] - a[j])*W[j,i]
-            w_tilde += b[i-1]*W[j,i-1] - b[j-1]*W[j-1,i]
-            W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
-            if W[j+1,i] > sqrt(eps(Float64))
-                println("converged at iteration ", j)
-                return j
-            end
-        end
+    if b[j] == 0
+      break
     end
 
-    ctx.k
+    # residuals
+    compute_residuals!(ctx, j)
+    
+    # Wasserstein distance.
+    μ = compute_μ(ctx, j)
+    ctx.w_distance_arr[j] = wasserstein(μ, ctx.ν_distribution; p=Val(1))
+
+    for i = 2:j
+      w_tilde  = b[i]*W[j,i+1] + (a[i] - a[j])*W[j,i]
+      w_tilde += b[i-1]*W[j,i-1] - b[j-1]*W[j-1,i]
+      W[j+1,i] = (w_tilde + 2*sign(w_tilde)*eps(Float64)*norm_A)/b[j]
+      if W[j+1,i] > sqrt(eps(Float64))
+        println("converged at iteration ", j)
+        return j
+      end
+    end
+  end
+
+  ctx.k_lanczos
 end
 
 # Lanczos with selective orthogonalization.
 function lanczos_so(ctx :: LanczosContext)
-    terminate = false
+  terminate = false
 
-    A = getA(ctx)
-    q = get_q(ctx)
-    a = get_a(ctx)
-    b = get_b(ctx)
+  A = get_A(ctx)
+  q = get_q_vec(ctx)
+  a = get_a_vec(ctx)
+  b = get_b_vec(ctx)
 
-    z = A * q
-    a[1] = q' * z
-    z = z - a[1]*q
-    b[1] = norm(z)
+  z = A * q
+  a[1] = q' * z
+  z = z - a[1]*q
+  b[1] = norm(z)
 
-    for j = 2:ctx.k
-        q_prev = q
-        q = z / b[j-1]
+  μ = compute_μ(ctx, 1)
+  ctx.w_distance_arr[1] = wasserstein(μ, ctx.ν_distribution; p=Val(1))
 
-        z = A*q - b[j-1] * q_prev
-        a[j] = q' * z
-        z = z - a[j]*q
-        b[j] = norm(z)
+  for j = 2:ctx.k_lanczos
+    q_prev = q
+    q = z / b[j-1]
+    Q = get_Q_store(ctx, j)
+    Q[:,j-1] = q
 
-        if b[j] == 0
-            break
-        end
+    z = A*q - b[j-1] * q_prev
+    a[j] = q' * z
+    z = z - a[j]*q
+    b[j] = norm(z)
 
-        # get residuals.
-        evals    = deepcopy(get_a(ctx, j))
-        b_copy   = deepcopy(get_b(ctx, j-1))
-        evec_row = qr_tridiag!(evals, b_copy, j)
-        T_norm = maximum(abs.(evals))
-
-        R = getRstore(ctx, j)
-        R[:] = abs.(evec_row) .* b[j-1]
-
-        # LanSO check.
-        for i = 1:j
-            if R[i] < sqrt(eps(Float64)) * T_norm
-                terminate = true
-                println("Good Ritz val #", i, ", ", R[i])
-            end
-        end
-        # TODO: needs full implementation.
-
-        # Wasserstein distance.
-        μ = compute_μ(ctx, j)
-        ctx.w_dists[j] = wasserstein(μ, ctx.ν; p=Val(1))
-
-        if terminate
-            println("residuals ", getRstore(ctx,j))
-            println("Wasserstein distances ", get_w_dists(ctx,j))
-            println("Done")
-            return j
-        end
+    if b[j] == 0
+      break
     end
-    ctx.k
+
+    # get residuals.
+    evals  = deepcopy(get_a_vec(ctx, j))
+    b_copy = deepcopy(get_b_vec(ctx, j))
+    
+    evec_row = qr_tridiag!(evals, b_copy, j)
+    T_norm = maximum(abs.(evals))
+
+    R = get_R_store(ctx, j)
+    R[:] = abs.(evec_row) .* b[j-1]
+
+    # LanSO check.
+    for i = 1:j
+      if R[i] < sqrt(eps(Float64)) * T_norm
+        terminate = true
+        # perform deflation
+        evals    = deepcopy(get_a_vec(ctx, j))
+        b_copy   = deepcopy(get_b_vec(ctx, j))
+        evals, evecs = eigen!(SymTridiagonal(evals, b_copy))
+        Z = Q * evecs
+        P = I - Z*Z'
+        A = P * A * P
+        println("Good Ritz val #", i, ", ", R[i])
+      end
+    end
+
+    # TODO: needs full implementation.
+
+    # Wasserstein distance.
+    μ = compute_μ(ctx, j)
+    ctx.w_distance_arr[j] = wasserstein(μ, ctx.ν_distribution; p=Val(1))
+
+    if terminate == true
+      println("residuals ", get_R_store(ctx, j))
+      println("Wasserstein distances ", get_w_distance_arr(ctx, j))
+      println("Done")
+      return j
+    end
+  end
+  ctx.k_lanczos
 end
 
-#let
-#    n = 50
-#    k = 50
-#    evals_true = collect(range(1, n))
-#    #evals = collect(exp.(-range(1, n)))
-#    A = mtrx_make(evals_true)
-#    A_tmp = copy(A)
-#    tridiag_reduce!(A_tmp)
-#    evals, β = tridiag_params(A_tmp)
-#    evec_row = qr_tridiag!(evals, β)
-#    ν = discretemeasure(evals)
-#    q = kronecker_quasirand_vec(n)
-##    display(A)
-#
-#    ctx = LanczosContext(A, q/norm(q), k, ν,'f')
-#    evals_lanczos, β = lanczos(ctx)
-#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-##    println(evals_lanczos)
-#    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-##    display(maximum(relative_diff))
-##    display(getRstore(ctx))
-#
-#    ctx_selective = LanczosContext(A, q/norm(q), k, ν, 's')
-#    evals_lanczos, β = lanczos(ctx_selective)
-#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-##    println(evals_lanczos)
-##    display(getRstore(ctx_selective))
-#    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-##    display(maximum(relative_diff))
-#
-#    ctx_until_first = LanczosContext(A, q/norm(q), k, ν,'u')
-#    evals_lanczos, β, j = lanczos(ctx_until_first)
-#    evec_row_lanczos = qr_tridiag!(evals_lanczos, β)
-#    display(get_w_dists(ctx_until_first, j))
-##    display(getRstore(ctx_until_first))
-##    relative_diff = abs.(evals_lanczos - evals_true)./abs.(evals_true)
-##    display(maximum(relative_diff))
+#@testset "Lanczos Implementations Data Flow" begin
+#    @testset "FULLORTH" begin
+let
+  # Common setup
+  N = 100
+  k = 20
+  A = randn(N, N)
+  A = A + A'
+  q_vec = randn(N)
+  q_vec = q_vec / norm(q_vec)
+  
+  # Create a true distribution (discrete measure)
+  evals_true = sort(randn(N))
+  weights_true = ones(N) ./ N
+  weights_true = weights_true / sum(weights_true)
+  ν = DiscreteNonParametric(evals_true, weights_true)
+
+  ctx = LanczosContext(FULLORTH(), A, q_vec, k, ν)
+  j = lanczos(ctx, FULLORTH())
+  
+  # Check a_vec and b_vec are populated
+  @test any(ctx.a_vec .!= 0.0)
+  @test any(ctx.b_vec .!= 0.0)
+  
+  # Check residuals are tracked (R_store should be populated)
+  @test any(ctx.R_store .!= 0.0)
+  @test size(ctx.R_store, 1) == k
+  
+  # Check Wasserstein distances are tracked
+  @test any(ctx.w_distance_arr .!= 0.0)
+  @test length(ctx.w_distance_arr) == k
+  
+  # Check Q_store exists and is populated
+  @test ctx.Q_store !== nothing
+  @test size(ctx.Q_store) == (N, k)
+end
+
+#    @testset "PRO" begin
+#        let
+#            # Common setup
+#            N = 100
+#            k = 20
+#            A = Symmetric(randn(N, N))
+#            q = randn(N)
+#            q = q / norm(q)
+#            
+#            # Create a true distribution (discrete measure)
+#            evals_true = sort(randn(N))
+#            weights_true = rand(N)
+#            weights_true = weights_true / sum(weights_true)
+#            ν = DiscreteNonParametric(evals_true, weights_true)
+#            ctx = LanczosContext(PRO(), A, q, k, ν)
+#            j = lanczos(ctx, PRO())
+#            
+#            # Check a_vec and b_vec are populated
+#            @test any(ctx.a_vec .!= 0.0)
+#            @test any(ctx.b_vec .!= 0.0)
+#            
+#            # Check residuals are tracked
+#            @test any(ctx.R_store .!= 0.0)
+#            @test size(ctx.R_store, 1) == k
+#            
+#            # Check Wasserstein distances are tracked
+#            @test any(ctx.w_distance_arr .!= 0.0)
+#            @test length(ctx.w_distance_arr) == k
+#            
+#            # Check W_store exists (orthogonality tracker)
+#            @test ctx.W_store !== nothing
+#            @test size(ctx.W_store) == (k+1, k+1)
+#        end
+#    end
+
+#    @testset "FIRSTORTH" begin
+#        let
+#            # Common setup
+#            N = 100
+#            k = 20
+#            A = Symmetric(randn(N, N))
+#            q = randn(N)
+#            q = q / norm(q)
+#            
+#            # Create a true distribution (discrete measure)
+#            evals_true = sort(randn(N))
+#            weights_true = rand(N)
+#            weights_true = weights_true / sum(weights_true)
+#            ν = DiscreteNonParametric(evals_true, weights_true)
+#            ctx = LanczosContext(FIRSTORTH(), A, q, k, ν)
+#            j = lanczos(ctx, FIRSTORTH())
+#            
+#            # Check a_vec and b_vec are populated
+#            @test any(ctx.a_vec .!= 0.0)
+#            @test any(ctx.b_vec .!= 0.0)
+#            
+#            # Check residuals are tracked
+#            @test any(ctx.R_store .!= 0.0)
+#            @test size(ctx.R_store, 1) == k
+#            
+#            # Check Wasserstein distances are tracked
+#            @test any(ctx.w_distance_arr .!= 0.0)
+#            @test length(ctx.w_distance_arr) == k
+#            
+#            # Check W_store exists (used for first orth detection)
+#            @test ctx.W_store !== nothing
+#            
+#            # Q_store should be nothing for FIRSTORTH
+#            @test ctx.Q_store === nothing
+#        end
+#    end
+
+#    @testset "SO" begin
+#        let
+#            # Common setup
+#            N = 100
+#            k = 20
+#            A = Symmetric(randn(N, N))
+#            q = randn(N)
+#            q = q / norm(q)
+#            
+#            # Create a true distribution (discrete measure)
+#            evals_true = sort(randn(N))
+#            weights_true = rand(N)
+#            weights_true = weights_true / sum(weights_true)
+#            ν = DiscreteNonParametric(evals_true, weights_true)
+#            ctx = LanczosContext(SO(), A, q, k, ν)
+#            j = lanczos(ctx, SO())
+#            
+#            # Check a_vec and b_vec are populated
+#            @test any(ctx.a_vec .!= 0.0)
+#            @test any(ctx.b_vec .!= 0.0)
+#            
+#            # Check residuals are tracked
+#            @test any(ctx.R_store .!= 0.0)
+#            @test size(ctx.R_store, 1) == k
+#            
+#            # Check Wasserstein distances are tracked
+#            @test any(ctx.w_distance_arr .!= 0.0)
+#            @test length(ctx.w_distance_arr) == k
+#            
+#            # Check Q_store exists and is populated
+#            @test ctx.Q_store !== nothing
+#            @test size(ctx.Q_store) == (N, k)
+#        end
+#    end
 #end
