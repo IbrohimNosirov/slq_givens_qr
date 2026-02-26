@@ -22,7 +22,6 @@ function givens_rotation(F::Float64, G::Float64)
         C[], S[]
 end
 
-# this works perfectly
 function eigen_small!(A::SubArray{Float64}, B::SubArray{Float64}, C::SubArray{Float64})
 #       DLAEV2 computes the eigendecomposition of a 2-by-2 symmetric matrix
 #               [  A   B  ]
@@ -55,7 +54,7 @@ function wilkinson_shift(a1::T, a2::T, b::T) where T <: AbstractFloat
                 return a1
         end
         denominator = d + sign(d)*sqrt(d*d + b*b)
-        if abs(denominator) < 5.0 * MACHEPS
+        if abs(denominator) < 2.0 * MACHEPS
                 return a1
         end
         shift = a1 - (b*b)/denominator
@@ -65,18 +64,16 @@ end
 
 function apply_givens_to_evec_row!(evec_row::AbstractVector{T}, c::T, s::T, i::Integer) where T <: AbstractFloat
   tau1 = evec_row[i]
-  tau2 = evec_row[i+1]
-  evec_row[i]   = c*tau1 - s*tau2
-  evec_row[i+1] = s*tau1 + c*tau2
+  evec_row[i]   =  c*tau1 + s*evec_row[i+1]
+  evec_row[i+1] = -s*tau1 + c*evec_row[i+1]
 end
 
 # 2x2 matrix case
 function apply_evec_to_evec_row!(evec_row::AbstractVector{T}, v1::T, v2::T, v3::T, v4::T,
                                  i::Integer) where T <: AbstractFloat
   tau1 = evec_row[i]
-  tau2 = evec_row[i+1]
-  evec_row[i]   = v1*tau1 - v3*tau2
-  evec_row[i+1] = v2*tau1 + v4*tau2
+  evec_row[i]   =  v1*tau1 + v3*evec_row[i+1]
+  evec_row[i+1] = -v2*tau1 + v4*evec_row[i+1]
 end
 
 function chase_bulge!(diagonal::AbstractVector{T}, subdiagonal::AbstractVector{T}, evec_row::AbstractVector{T},
@@ -101,11 +98,7 @@ function chase_bulge!(diagonal::AbstractVector{T}, subdiagonal::AbstractVector{T
                 subdiagonal[i] = c*tmp1 + s*tmp2
 
                 if i > idx_start
-                        if abs(subdiagonal[i-1]) < 2.0 * MACHEPS * (abs(diagonal[i-1]) + abs(diagonal[i]))
-                                subdiagonal[i-1] = 0.0
-                        else
-                                subdiagonal[i-1] = c*subdiagonal[i-1] + s*z
-                        end
+                        subdiagonal[i-1] = c*subdiagonal[i-1] + s*z
                 end
 
                 x = subdiagonal[i]
@@ -116,8 +109,10 @@ function chase_bulge!(diagonal::AbstractVector{T}, subdiagonal::AbstractVector{T
                 end
         end
 
-        if abs(subdiagonal[idx_finish]) < 2.0 * MACHEPS * (abs(diagonal[idx_finish])+abs(diagonal[idx_finish+1]))
-                subdiagonal[idx_finish] = 0.0
+        for i = idx_start:idx_finish
+                if abs(subdiagonal[i]) < 2.0 * MACHEPS * (abs(diagonal[i]) + abs(diagonal[i+1]))
+                        subdiagonal[i] = 0.0
+                end
         end
 end
 
@@ -148,53 +143,44 @@ function qr_tridiag!(diagonal::AbstractVector{T}, subdiagonal::AbstractVector{T}
 
 		# sweep off-diagonal looking for unreduced blocks.
                 j = 1
-                idx_start  = 0
+                idx_start = 1
                 idx_finish = 0
-                unreduced_block_found = false
 
-                # logic is right, but needs cleaning
+                # should do in one while loop
                 while j <= subdiagonal_n
-                        idx_start  = 0
-                        idx_finish = 0
-
-                        while j <= subdiagonal_n
-                                if subdiagonal[j] != 0.0
-                                        idx_start = j
-                                        break
-                                end
+                        if subdiagonal[j] == 0.0
                                 j += 1
+                                continue
                         end
 
+                        idx_start = j
+
+                        # find a ending index.
                         while j < subdiagonal_n
                                 if subdiagonal[j+1] == 0.0
-                                        idx_finish = j
                                         break
-                                elseif j+1 == subdiagonal_n
+                                else
                                         j += 1
-                                        idx_finish = j
-                                        break
                                 end
-                                j += 1
                         end
 
-                        if idx_start != 0 && idx_finish != 0
-                                unreduced_block_found = true
-                        end
+                        idx_finish = j
 
-                        if idx_finish == idx_start && unreduced_block_found
+                        @assert idx_start > 0 "invalid matrix index"
+                        @assert idx_finish >= idx_start (idx_start, idx_finish)
+
+                        if idx_finish == idx_start
                                 CS, SN = eigen_small!(view(diagonal,    idx_start:idx_finish),
                                                       view(subdiagonal, idx_start:idx_finish),
                                                       view(diagonal,    idx_start+1:idx_finish+1))
                                 apply_evec_to_evec_row!(evec_row, CS, SN, SN, CS, idx_start)
-                                unreduced_block_found = false
-                                j += 1
                         end
 
-                        if idx_finish > idx_start && unreduced_block_found
+                        if idx_finish > idx_start
                                 chase_bulge!(diagonal, subdiagonal, evec_row, idx_start, idx_finish)
-                                unreduced_block_found = false
-                                j += 1
                         end
+
+                        j += 1
                 end
 	end
 

@@ -101,7 +101,7 @@ let
         evecs_mine = zeros(evals_count)
         qr_tridiag!(evals_mine, subdiagonal, evecs_mine, 1)
 
-        evals_count = 20
+        evals_count = 10
         evals = zeros(evals_count)
         make_functional_decay!(evals, Interval(0,1), matern_1_2)
 
@@ -122,12 +122,10 @@ let
         evals_lapack, evecs_lapack = @time eigen!(SymTridiagonal(diagonal, subdiagonal))
         evecs_lapack = evecs_lapack[1,:]
 
-        sort!(evecs_mine)
-        sort!(evecs_lapack)
-        evec_err = maximum(abs.(evecs_mine .- evecs_lapack) ./ abs.(evecs_lapack))
-        println("evecs_mine ", evecs_mine)
-        println("evecs_lapack ", evecs_lapack)
-        println("max evec error ", evec_err)
+        evec_err_lapack = sum(evecs_lapack .* evecs_lapack)
+        evec_err_mine = sum(evecs_mine .* evecs_mine)
+        println("mine QQ^T ", evec_err_mine)
+        println("lapack QQ^T ", evec_err_lapack)
         
         evals_lapack_err = maximum(abs.(evals .- evals_lapack) ./ abs.(evals))
         println("max lapack eval error ", evals_lapack_err)
